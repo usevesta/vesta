@@ -10,10 +10,21 @@ use ts_rs::TS;
 
 use crate::config::ConfigError;
 use crate::event::EventKind;
-use crate::id::Target;
+use crate::id::{Target, validate_id};
 
 /// `schema_version` understood by this build for `dashboard.json`.
 pub const DASHBOARD_SCHEMA_VERSION: u32 = 1;
+
+/// Limits enforced by [`Dashboard::validate`]. Generous for a wall panel,
+/// tight enough that a broken client cannot store something unusable.
+pub const MAX_PAGES: usize = 32;
+pub const MAX_WIDGETS_PER_PAGE: usize = 64;
+pub const MAX_GRID_COLUMNS: u8 = 12;
+pub const MAX_ROW_SPAN: u8 = 6;
+/// Page titles, in characters.
+pub const MAX_TITLE_CHARS: usize = 64;
+/// Widget `type` strings (registry keys such as `light-control`), in bytes.
+pub const MAX_WIDGET_TYPE_LEN: usize = 64;
 
 /// A JSON object with arbitrary values (widget `props`).
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
@@ -37,8 +48,12 @@ impl Dashboard {
         Ok(dashboard)
     }
 
-    /// Checks the schema version, unique page IDs and that every widget fits
-    /// its page's grid.
+    /// Checks invariants serde cannot express: the schema version, unique,
+    /// well-formed page IDs (lowercase `snake_case`), non-empty titles, sane
+    /// grids and that every widget fits its page. Targets are well-formed by
+    /// construction ([`Target`] only parses `<device_id>/<endpoint_id>`);
+    /// whether they exist is not checked here (a device may be offline or
+    /// gone, and the UI shows it as unavailable).
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != DASHBOARD_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedSchemaVersion {
@@ -46,14 +61,44 @@ impl Dashboard {
                 supported: DASHBOARD_SCHEMA_VERSION,
             });
         }
+        if self.pages.len() > MAX_PAGES {
+            return Err(ConfigError::TooManyPages {
+                found: self.pages.len(),
+                max: MAX_PAGES,
+            });
+        }
         let mut seen = BTreeSet::new();
         for page in &self.pages {
+            validate_id(&page.id).map_err(|source| ConfigError::InvalidPageId {
+                page: page.id.clone(),
+                source,
+            })?;
             if !seen.insert(page.id.as_str()) {
                 return Err(ConfigError::DuplicatePage(page.id.clone()));
             }
             page.validate()?;
         }
         Ok(())
+    }
+
+    /// Every endpoint the dashboard refers to: widget targets, wake events
+    /// and the doorbell overlay.
+    pub fn targets(&self) -> impl Iterator<Item = &Target> {
+        let widgets = self
+            .pages
+            .iter()
+            .flat_map(|page| page.widgets.iter().filter_map(|w| w.target.as_ref()));
+        let wake = self.kiosk.wake_on.iter().map(|event| &event.target);
+        let overlay = self.doorbell_overlay.iter().flat_map(|overlay| {
+            [
+                Some(&overlay.doorbell_target),
+                overlay.camera_target.as_ref(),
+                overlay.open_target.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+        });
+        widgets.chain(wake).chain(overlay)
     }
 }
 
@@ -122,10 +167,32 @@ impl Page {
             page: self.id.clone(),
             reason,
         };
-        if self.grid_columns == 0 {
-            return Err(invalid("grid_columns must be at least 1".to_owned()));
+        let title = self.title.trim();
+        if title.is_empty() {
+            return Err(invalid("title is empty".to_owned()));
+        }
+        if title.chars().count() > MAX_TITLE_CHARS {
+            return Err(invalid(format!(
+                "title is longer than {MAX_TITLE_CHARS} characters"
+            )));
+        }
+        if self.grid_columns == 0 || self.grid_columns > MAX_GRID_COLUMNS {
+            return Err(invalid(format!(
+                "grid_columns must be between 1 and {MAX_GRID_COLUMNS}"
+            )));
+        }
+        if self.widgets.len() > MAX_WIDGETS_PER_PAGE {
+            return Err(invalid(format!(
+                "{} widgets, at most {MAX_WIDGETS_PER_PAGE} are allowed",
+                self.widgets.len()
+            )));
         }
         for (index, widget) in self.widgets.iter().enumerate() {
+            if !is_widget_type(&widget.widget_type) {
+                return Err(invalid(format!(
+                    "widget {index} has an invalid type (lowercase letters, digits and `-`)"
+                )));
+            }
             if widget.col_span == 0 || widget.row_span == 0 {
                 return Err(invalid(format!("widget {index} has an empty span")));
             }
@@ -135,9 +202,25 @@ impl Page {
                     widget.col_span, self.grid_columns
                 )));
             }
+            if widget.row_span > MAX_ROW_SPAN {
+                return Err(invalid(format!(
+                    "widget {index} spans {} rows, at most {MAX_ROW_SPAN} are allowed",
+                    widget.row_span
+                )));
+            }
         }
         Ok(())
     }
+}
+
+/// Registry keys are kebab-case: `light-control`, `clock-weather`. Types
+/// this build does not know are allowed (a newer frontend may add them).
+fn is_widget_type(widget_type: &str) -> bool {
+    !widget_type.is_empty()
+        && widget_type.len() <= MAX_WIDGET_TYPE_LEN
+        && widget_type
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

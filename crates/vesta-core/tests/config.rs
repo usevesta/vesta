@@ -241,3 +241,112 @@ fn dashboard_validation() {
         Err(ConfigError::Json(_))
     ));
 }
+
+/// What the editor can send: everything the UI might get wrong is refused
+/// with a reason, nothing panics.
+#[test]
+fn dashboard_validation_rejects_what_the_editor_must_never_store() {
+    let base: Value = serde_json::from_str(DASHBOARD_EXAMPLE).unwrap();
+    let invalid = |edit: &dyn Fn(&mut Value)| {
+        let mut dashboard = base.clone();
+        edit(&mut dashboard);
+        Dashboard::from_json(&dashboard.to_string()).unwrap_err()
+    };
+    let layout = |edit: &dyn Fn(&mut Value)| {
+        let error = invalid(edit);
+        assert!(
+            matches!(error, ConfigError::InvalidLayout { ref page, .. } if page == "home"),
+            "{error}"
+        );
+    };
+
+    // Page ids are stable snake_case identifiers.
+    for bad_id in ["", "Home", "my page", "home-2", "_home"] {
+        let error = invalid(&|d| d["pages"][0]["id"] = json!(bad_id));
+        assert!(
+            matches!(error, ConfigError::InvalidPageId { .. }),
+            "{bad_id:?}: {error}"
+        );
+    }
+    let error = invalid(&|d| {
+        let page = d["pages"][0].clone();
+        let pages = d["pages"].as_array_mut().unwrap();
+        pages.clear();
+        pages.extend((0..=MAX_PAGES).map(|i| {
+            let mut page = page.clone();
+            page["id"] = json!(format!("page_{i}"));
+            page
+        }));
+    });
+    assert!(
+        matches!(error, ConfigError::TooManyPages { found: 33, max: 32 }),
+        "{error}"
+    );
+
+    layout(&|d| d["pages"][0]["title"] = json!("   "));
+    layout(&|d| d["pages"][0]["title"] = json!("x".repeat(MAX_TITLE_CHARS + 1)));
+    layout(&|d| d["pages"][0]["grid_columns"] = json!(0));
+    layout(&|d| d["pages"][0]["grid_columns"] = json!(MAX_GRID_COLUMNS + 1));
+    layout(&|d| d["pages"][0]["widgets"][0]["row_span"] = json!(MAX_ROW_SPAN + 1));
+    layout(&|d| d["pages"][0]["widgets"][0]["col_span"] = json!(0));
+    for bad_type in ["", "Light-Control", "light control", "light_control"] {
+        layout(&|d| d["pages"][0]["widgets"][0]["type"] = json!(bad_type));
+    }
+    layout(&|d| d["pages"][0]["widgets"][0]["type"] = json!("x".repeat(MAX_WIDGET_TYPE_LEN + 1)));
+    layout(&|d| {
+        let widget = d["pages"][0]["widgets"][0].clone();
+        d["pages"][0]["widgets"] = Value::Array(vec![widget; MAX_WIDGETS_PER_PAGE + 1]);
+    });
+
+    // Targets must be `<device_id>/<endpoint_id>`; serde refuses anything else.
+    for bad_target in ["living_room_light", "Living Room/Light", "a/b/c", ""] {
+        let error = invalid(&|d| d["pages"][0]["widgets"][1]["target"] = json!(bad_target));
+        assert!(
+            matches!(error, ConfigError::Json(_)),
+            "{bad_target:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn dashboard_validation_accepts_what_the_editor_makes() {
+    let mut dashboard = Dashboard::from_json(DASHBOARD_EXAMPLE).unwrap();
+    // A target that does not exist (yet) is fine: the device may be offline.
+    dashboard.pages[0].widgets[1].target = Some("attic_light/main".parse().unwrap());
+    // Unknown widget types are fine: a newer screen may know them.
+    dashboard.pages[0].widgets[0].widget_type = "thermostat-control-2".to_owned();
+    // A new, empty page with a generated id.
+    dashboard.pages.push(Page {
+        id: "page_2".to_owned(),
+        title: "Página nueva".to_owned(),
+        icon: Some("bedroom".to_owned()),
+        grid_columns: MAX_GRID_COLUMNS,
+        widgets: vec![],
+    });
+    dashboard.validate().unwrap();
+
+    // No pages at all is valid too (the UI shows "nothing to show yet").
+    dashboard.pages.clear();
+    dashboard.validate().unwrap();
+}
+
+#[test]
+fn dashboard_lists_every_target_it_uses() {
+    let dashboard = Dashboard::from_json(DASHBOARD_EXAMPLE).unwrap();
+    let targets: Vec<String> = dashboard.targets().map(ToString::to_string).collect();
+    assert_eq!(
+        targets,
+        [
+            "front_door_strike/main",
+            "front_doorbell/main",
+            "living_room_light/main",
+            "living_room_fan/fan",
+            "living_room_fan/light",
+            "front_doorbell/main",
+            "front_doorbell/main",
+            "front_doorbell/main",
+            "front_doorbell/main",
+            "front_door_strike/main",
+        ]
+    );
+}
