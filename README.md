@@ -51,7 +51,7 @@ cargo test --workspace --all-features
 
 cd web
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
-pnpm test:e2e   # end-to-end smoke test against a real vesta-hubd --dev
+pnpm test:e2e   # end-to-end tests (live control, editing the screen) against a real vesta-hubd --dev
 ```
 
 `pnpm test:e2e` starts its own `vesta-hubd --dev` with `cargo run` on a free port and stops it
