@@ -16,6 +16,11 @@ use std::sync::Arc;
 
 use vesta_core::{DeviceConfig, DeviceDriver, DeviceId, DriverError};
 
+/// The built-in simulated home (`config.json` + `dashboard.json`), for
+/// `vesta-hubd --dev` and for the app before a home is set up.
+#[cfg(feature = "sim")]
+pub use vesta_driver_sim::demo;
+
 /// Builds a driver from a device's driver-specific `config` object.
 pub type DriverFactory =
     dyn Fn(&serde_json::Value) -> Result<Arc<dyn DeviceDriver>, DriverError> + Send + Sync;

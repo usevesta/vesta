@@ -21,8 +21,8 @@ use vesta_hub::{Hub, HubOptions, bind_loopback};
 
 /// The simulated home used by `--dev`. No secrets: every device uses the
 /// `sim` driver.
-const DEV_CONFIG: &str = include_str!("../fixtures/dev-config.json");
-const DEV_DASHBOARD: &str = include_str!("../fixtures/dev-dashboard.json");
+const DEV_CONFIG: &str = vesta_drivers::demo::CONFIG;
+const DEV_DASHBOARD: &str = vesta_drivers::demo::DASHBOARD;
 
 #[derive(Debug, Parser)]
 #[command(name = "vesta-hubd", version, about = "Headless VESTA hub")]
