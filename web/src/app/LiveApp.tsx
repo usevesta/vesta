@@ -11,14 +11,20 @@ import { useDashboardStore } from '@/live/dashboard-store'
 import { DoorbellOverlayView } from '@/live/kiosk/DoorbellOverlayView'
 import { startDoorbell, startScreensaver } from '@/live/kiosk/kiosk'
 import { Screensaver } from '@/live/kiosk/Screensaver'
+import { startScreenControl } from '@/live/kiosk/screen'
 import { liveClient, startLive } from '@/live/live'
 import { LiveWidget } from '@/live/LiveWidget'
 import { isIconName } from '@/lib/icons'
 import { useConnectionStore } from '@/lib/ws/connection-store'
+import { platform } from '@/platform'
 
-/** Screensaver and doorbell overlay, configured by the dashboard. */
+/**
+ * Screensaver and doorbell overlay, configured by the dashboard. The screen
+ * stays awake and dims with the screensaver where the device allows it.
+ */
 function Kiosk({ dashboard }: { dashboard: Dashboard }) {
   const { kiosk, doorbell_overlay: overlay } = dashboard
+  useEffect(() => startScreenControl(platform()), [])
   useEffect(() => startScreensaver(kiosk, liveClient()), [kiosk])
   useEffect(() => (overlay === undefined ? undefined : startDoorbell(overlay, liveClient())), [overlay])
   return (
