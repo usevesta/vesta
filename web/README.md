@@ -13,7 +13,9 @@ pnpm build
 ```
 
 Run the hub first (`cargo run -p vesta-hubd -- --dev` from the repo root), then `pnpm dev`.
-`VESTA_HUB_ORIGIN` points the dev proxy at a hub on another port.
+`VESTA_HUB_ORIGIN` points the dev proxy at a hub on another port. Under `pnpm tauri dev` (in
+`apps/tauri`) the dev server runs on port 1420 and proxies to the app's in-process hub on
+`127.0.0.1:8181`.
 
 Open `http://localhost:5173/?demo=1` to see every widget with local mock state (no home
 needed). Add `&lang=es` to force Spanish.
@@ -22,7 +24,7 @@ needed). Add `&lang=es` to force Spanish.
 
 | Path | What |
 |---|---|
-| `src/api/generated/` | TypeScript types generated from Rust. Never edit by hand. |
+| `src/api/generated/` | TypeScript types generated from Rust. Never edit by hand. `shell/` holds the app shell's kiosk command types. |
 | `src/api/protocol.ts` | Runtime guards for everything the home sends (`ServerMessage`, dashboard). |
 | `src/api/http.ts` | `GET /api/v1/dashboard` and `/devices`, decoded. |
 | `src/live/` | The live app: the single connection (`live.ts`), device store with optimistic commands, widget bindings, screensaver and doorbell overlay. |
@@ -36,6 +38,7 @@ needed). Add `&lang=es` to force Spanish.
 | `src/theme/` | Theme presets (`data-theme`), light/dark override, transparency toggle. |
 | `src/i18n/` | `en` and `es` strings. Every user-facing string goes through `t()`. |
 | `src/demo/` | Demo mode (`?demo=1`). |
+| `src/platform/` | The device: keep awake, brightness, kiosk mode. Calls the app shell's commands inside the app; reports `unsupported` in a plain browser. |
 
 ## Rules of thumb
 
