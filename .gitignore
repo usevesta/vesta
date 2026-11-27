@@ -29,3 +29,7 @@ local.properties
 
 # macOS
 .DS_Store
+
+# Claude Code: agent worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json
