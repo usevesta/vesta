@@ -65,6 +65,9 @@ Why endpoints: a ceiling fan with a light has **two** things that switch on and 
 }
 ```
 
+- `capabilities` is an object keyed by capability name. `features` is omitted for capabilities that have none; `state` is omitted while the driver does not know it yet (it never invents a value). A capability with neither (`trigger`, `doorbell`) is an empty object: `"trigger": {}`.
+- Optional fields: device `last_seen` (RFC 3339) and endpoint `room`, which overrides the device's room.
+
 ## Endpoint Types
 The type decides the icon, the default widget and whether opening commands are sensitive. Capabilities decide the controls. Drivers report a default type; users may override it from the UI (e.g. "this relay is a light").
 
@@ -104,7 +107,7 @@ The type decides the icon, the default widget and whether opening commands are s
 | `temperature` | — | `celsius` | — | — | v2 |
 | `humidity` | — | `percent: 0–100` | — | — | v2 |
 | `power_meter` | `role` (`grid`, `solar`, `load`, `ev`), `bidirectional: bool` | `power_w`, `energy_wh`, `energy_exported_wh?` | — | — | v2 |
-| `ev_charger` | `min_current_a`, `max_current_a`, `modes` | `status: disconnected \| connected \| charging \| paused \| error`, `power_w`, `session_energy_wh`, `current_a`, `mode` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }` | — | v2 |
+| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `scheduled`) | `status: disconnected \| connected \| charging \| paused \| error`, `power_w`, `session_energy_wh`, `current_a`, `mode` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }` | — | v2 |
 | `battery` | — | `percent: 0–100`, `low: bool` | — | — | v2 |
 
 Notes:
@@ -124,16 +127,22 @@ Notes:
 - Wire shape:
   ```json
   { "type": "command", "request_id": "c-42", "target": "living_room_fan/light",
-    "command": { "capability": "level", "action": "set", "level": 50, "transition_ms": 300 } }
+    "command": { "capability": "level", "action": "set", "level": 50, "transition_ms": 300 },
+    "confirmed": false }
   ```
+- `confirmed` (default `false`) is `true` only after the user explicitly confirmed a sensitive command (see below).
 - Lifecycle: the frontend shows the change as **pending** immediately, the Hub forwards it to the driver, and the pending state resolves when the driver reports the new state. If no confirmation arrives before the timeout (default 5 s), the UI reverts and shows an error.
-- Errors: `unsupported`, `offline`, `timeout`, `rejected` (role/permission/biometric), `device` (driver-specific message, never shown raw to users).
+- Result: the Hub answers every command with a `command_result`. `ok: true` means the device accepted it; `error` is present exactly when `ok` is `false`:
+  ```json
+  { "type": "command_result", "request_id": "c-42", "ok": false, "error": { "code": "rejected", "reason": "confirmation_required" } }
+  ```
+- Error `code`s: `unsupported`, `offline`, `timeout`, `rejected` (with `reason`: `not_allowed` for role/permission/time window, `confirmation_required` for a sensitive command sent without `"confirmed": true`), `device` (optional driver-specific `message` for diagnostics, never shown raw to users and never containing hosts, addresses or credentials).
 
 ### Sensitive Commands
-`lock.unlock`, `lock.unlatch`, `trigger.fire`, and `cover.open` / `cover.set_position` on `garage_door` / `gate` endpoints are **sensitive**:
+`lock.unlock`, `lock.unlatch`, `trigger.fire`, and `cover.open` / `cover.set_position` on endpoints that guard access to the home (`garage_door`, `gate`, `door`, `lock` — the types marked sensitive above) are **sensitive**:
 - They require a role that allows them (Guests may be limited to specific targets and time windows).
-- On mobile they require biometric confirmation (Face ID / fingerprint) before sending.
-- The Hub enforces this; the frontend only provides the confirmation UX.
+- On mobile they require biometric confirmation (Face ID / fingerprint) before sending, and the request carries `"confirmed": true`.
+- The Hub enforces this (role check, and `rejected` / `confirmation_required` without `confirmed`); the frontend only provides the confirmation UX.
 
 ## Events
 - Events are instantaneous facts, not state: `doorbell.pressed`, `occupancy.detected`.
@@ -147,9 +156,22 @@ Notes:
 - Each device reports `online: bool` and `last_seen`. Offline devices keep their last state but widgets render as unavailable.
 
 ## WebSocket Messages (sketch)
-- Server → client: `snapshot` (all devices), `state` (`target`, `capability`, `state`), `event`, `availability` (`device_id`, `online`), `command_result` (`request_id`, `ok` or `error`).
+- Server → client: `snapshot` (`devices`: all devices), `state` (`target`, `capability`, `state`), `event`, `availability` (`device_id`, `online`), `command_result` (`request_id`, `ok`, `error` when not ok).
 - Client → server: `command`.
 - On connect, reconnect, or `RecvError::Lagged` on the Hub side, the client receives a fresh `snapshot`.
+- `state` always carries the capability's full state:
+  ```json
+  { "type": "state", "target": "living_room_fan/light", "capability": "level", "state": { "level": 80 } }
+  ```
+- `availability`:
+  ```json
+  { "type": "availability", "device_id": "living_room_fan", "online": false }
+  ```
+- Types are defined once in `vesta-core` and exported to TypeScript (`web/src/api/generated/`, regenerated by `cargo test -p vesta-core`).
+- Hub handling of bad input:
+  - A command for an unknown target, or for a capability the endpoint does not have, gets `unsupported`.
+  - Malformed or unparseable client messages (no usable `request_id`) are dropped and logged at `debug`; the connection stays open.
+  - `request_id` is limited to 64 characters; longer ids are treated as malformed.
 
 ## Rust Shape (sketch)
 
@@ -178,6 +200,8 @@ pub enum Command {
 ```
 
 Drivers return `DriverError::Unsupported` for commands they cannot execute. Routing a frontend command is a single `match`; testing a driver is feeding it commands and asserting the mocked I/O.
+
+`EventSink` is bound to one device and feeds the Hub's device runtime through a bounded channel (no update is dropped before the snapshot cache records it). The runtime then fans updates out to clients over the `EventBus` (`tokio::sync::broadcast`), where a lagging subscriber gets a fresh snapshot instead.
 
 ## Configuration Overrides
 `config.json` holds driver connection settings and optional presentation overrides per endpoint. It never declares capabilities.

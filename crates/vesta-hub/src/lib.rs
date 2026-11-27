@@ -1,0 +1,184 @@
+//! The VESTA Hub: device runtime plus the local HTTP/WebSocket API.
+//!
+//! The frontend always talks to a **local** endpoint. On the Hub device that
+//! is this server, bound to loopback only; other devices will reach it
+//! through `vesta-link`'s encrypted tunnel, never over plain HTTP on the LAN.
+//!
+//! | Route | Response |
+//! |---|---|
+//! | `GET /api/v1/health` | `{ "status": "ok" }` (liveness) |
+//! | `GET /api/v1/devices` | `Snapshot`: `{ "devices": [...] }` |
+//! | `GET /api/v1/dashboard` | `Dashboard` |
+//! | `GET /api/v1/ws` | WebSocket: `ServerMessage` / `ClientMessage` |
+//!
+//! The API is brand-free and never exposes driver keys or driver config:
+//! devices are described only by their endpoints and capabilities.
+
+use std::future::Future;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, bail};
+use axum::Router;
+use tokio::net::TcpListener;
+use tokio::sync::watch;
+use tokio::task::JoinSet;
+use vesta_core::{Dashboard, EventBus, HubConfig, Target};
+pub use vesta_drivers::Registry;
+
+mod api;
+mod runtime;
+mod ws;
+
+use runtime::Runtime;
+
+/// Tunables. `Default` matches the documented behaviour.
+#[derive(Debug, Clone)]
+pub struct HubOptions {
+    /// How long a driver has to accept a command before the client gets
+    /// `timeout`.
+    pub command_timeout: Duration,
+    /// Updates buffered per WebSocket session before it must resync with a
+    /// fresh snapshot.
+    pub bus_capacity: usize,
+}
+
+impl HubOptions {
+    pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+}
+
+impl Default for HubOptions {
+    fn default() -> Self {
+        Self {
+            command_timeout: Self::DEFAULT_COMMAND_TIMEOUT,
+            bus_capacity: EventBus::DEFAULT_CAPACITY,
+        }
+    }
+}
+
+/// A running Hub: devices are live as soon as [`Hub::start`] returns; the
+/// API is served by [`Hub::serve`].
+pub struct Hub {
+    runtime: Arc<Runtime>,
+    dashboard: Arc<Dashboard>,
+    shutdown: watch::Sender<bool>,
+    tasks: JoinSet<()>,
+}
+
+impl Hub {
+    /// Validates both documents, builds every configured device through
+    /// `registry` and starts the device loops.
+    pub async fn start(
+        config: &HubConfig,
+        dashboard: Dashboard,
+        registry: &Registry,
+        options: HubOptions,
+    ) -> anyhow::Result<Self> {
+        config.validate().context("invalid hub config")?;
+        dashboard.validate().context("invalid dashboard")?;
+        let mut tasks = JoinSet::new();
+        let runtime = Runtime::start(config, registry, &options, &mut tasks);
+        for target in dashboard_targets(&dashboard) {
+            if !runtime.has_target(target) {
+                tracing::warn!(endpoint = %target, "dashboard refers to an endpoint that does not exist");
+            }
+        }
+        let (shutdown, _) = watch::channel(false);
+        Ok(Self {
+            runtime,
+            dashboard: Arc::new(dashboard),
+            shutdown,
+            tasks,
+        })
+    }
+
+    /// The API routes, for embedding or testing without a socket.
+    pub fn router(&self) -> Router {
+        api::router(api::AppState {
+            runtime: Arc::clone(&self.runtime),
+            dashboard: Arc::clone(&self.dashboard),
+            shutdown: self.shutdown.subscribe(),
+        })
+    }
+
+    /// Serves the API on `listener` until `shutdown` resolves, then closes
+    /// WebSocket sessions, waits for open requests and stops the devices.
+    /// Refuses a listener that is not bound to loopback.
+    pub async fn serve<F>(mut self, listener: TcpListener, shutdown: F) -> anyhow::Result<()>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let local = listener
+            .local_addr()
+            .context("listener has no local address")?;
+        ensure_loopback(local)?;
+        let router = self.router();
+        let notify = self.shutdown.clone();
+        tracing::info!("listening on http://{local}");
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                shutdown.await;
+                notify.send_replace(true);
+            })
+            .await
+            .context("server error")?;
+        self.tasks.shutdown().await;
+        tracing::info!("hub stopped");
+        Ok(())
+    }
+}
+
+/// Binds the API listener. Only loopback addresses are accepted in this
+/// version: phones and tablets will reach the Hub through the paired,
+/// encrypted link (`vesta-link`), never over plain HTTP on the LAN.
+pub async fn bind_loopback(addr: SocketAddr) -> anyhow::Result<TcpListener> {
+    ensure_loopback(addr)?;
+    TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("could not listen on {addr}"))
+}
+
+fn ensure_loopback(addr: SocketAddr) -> anyhow::Result<()> {
+    if addr.ip().is_loopback() {
+        Ok(())
+    } else {
+        bail!(
+            "refusing to listen on {addr}: the hub only accepts connections from this machine \
+             (127.0.0.1 or ::1); other devices will connect through the paired, encrypted link"
+        )
+    }
+}
+
+fn dashboard_targets(dashboard: &Dashboard) -> impl Iterator<Item = &Target> {
+    let widgets = dashboard
+        .pages
+        .iter()
+        .flat_map(|page| page.widgets.iter().filter_map(|w| w.target.as_ref()));
+    let wake = dashboard.kiosk.wake_on.iter().map(|event| &event.target);
+    let overlay = dashboard.doorbell_overlay.iter().flat_map(|overlay| {
+        [
+            Some(&overlay.doorbell_target),
+            overlay.camera_target.as_ref(),
+            overlay.open_target.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+    });
+    widgets.chain(wake).chain(overlay)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn refuses_non_loopback_addresses() {
+        for addr in ["0.0.0.0:8080", "192.0.2.10:8080", "[::]:8080"] {
+            let error = bind_loopback(addr.parse().unwrap()).await.err().unwrap();
+            assert!(error.to_string().contains("refusing to listen"), "{error}");
+        }
+        let listener = bind_loopback("127.0.0.1:0".parse().unwrap()).await.unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
+    }
+}

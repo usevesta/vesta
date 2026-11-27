@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/vesta-core",
+    "crates/vesta-hub",
+    "crates/vesta-drivers",
+    "crates/drivers/vesta-driver-sim",
+    "apps/hubd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/usevesta/vesta"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+vesta-core = { path = "crates/vesta-core" }
+vesta-hub = { path = "crates/vesta-hub" }
+# Drivers are opt-in per Cargo feature; members enable the ones they need.
+vesta-drivers = { path = "crates/vesta-drivers", default-features = false }
+vesta-driver-sim = { path = "crates/drivers/vesta-driver-sim" }
+
+# Shared third-party crates. Members opt into extra features as needed.
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false }
+clap = { version = "4.6", features = ["derive"] }
+fastrand = "2.5"
+futures-util = { version = "0.3", default-features = false }
+jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.52", default-features = false }
+# Test-only WebSocket client; keep in step with the version axum uses.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+tower = { version = "0.5", default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
+ts-rs = { version = "12.0", features = ["serde-json-impl", "jiff-impl"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

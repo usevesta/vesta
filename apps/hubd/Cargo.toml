@@ -1,0 +1,25 @@
+[package]
+name = "vesta-hubd"
+description = "Headless VESTA hub (no screen): Linux deployments and the development loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "vesta-hubd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt", "std"] }
+vesta-core.workspace = true
+vesta-drivers = { workspace = true, features = ["sim"] }
+vesta-hub.workspace = true
+
+[lints]
+workspace = true

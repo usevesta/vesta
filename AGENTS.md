@@ -74,6 +74,7 @@ Open-source (Apache-2.0), local-first smart home wall panel built with **Tauri v
 
 ### Frontend (React + TypeScript)
 - React + `shadcn/ui` only; do not add other UI component libraries.
+- Icons: Lucide (`lucide-react`) only, rendered through the semantic icon registry (`<Icon name="fan" />`), never imported ad hoc in components. Never add Font Awesome Pro or other non-redistributable assets — this is a public repo.
 - Strict TypeScript (`noImplicitAny`, no `any`).
 - State management via Zustand synced over a single WebSocket connection with automatic exponential-backoff reconnection (critical for Wi-Fi <-> 5G handoffs). On reconnect, request a full snapshot.
 - **Wall-first ergonomics:** Primary interactive controls must have large touch targets (`min-h-14` / `min-h-16`) and high contrast in dark mode.
@@ -84,7 +85,7 @@ Open-source (Apache-2.0), local-first smart home wall panel built with **Tauri v
 - **This is a public repository.** Never include personal data in code, docs, examples, tests, fixtures or commit messages: real names or family references, home addresses or cities, device serial numbers, real IPs/MACs, Wi-Fi names. Use generic personas and placeholders.
 
 ## Common Commands
-- **Dev loop (no tablet needed):** `cargo run -p vesta-hubd` in one terminal, `cd web && pnpm dev` in another (Vite proxies `/api` and `/ws` to the hub).
+- **Dev loop (no tablet needed):** `cargo run -p vesta-hubd -- --dev` (simulated home) in one terminal, `cd web && pnpm dev` in another (Vite proxies `/api` and `/ws` to the hub).
 - **Check Rust workspace:** `cargo check --workspace --all-features`
 - **Lint & Format Rust:** `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - **Run Rust tests:** `cargo test --workspace --all-features`

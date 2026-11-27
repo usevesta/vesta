@@ -1,0 +1,28 @@
+[package]
+name = "vesta-hub"
+description = "VESTA Hub: device runtime and the local HTTP/WebSocket API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum = { workspace = true, features = ["http1", "json", "tokio", "ws"] }
+futures-util = { workspace = true, features = ["sink", "std"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tracing.workspace = true
+vesta-core.workspace = true
+vesta-drivers.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio-tungstenite.workspace = true
+tower = { workspace = true, features = ["util"] }
+vesta-drivers = { workspace = true, features = ["sim"] }
+
+[lints]
+workspace = true

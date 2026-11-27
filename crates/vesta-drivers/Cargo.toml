@@ -1,0 +1,25 @@
+[package]
+name = "vesta-drivers"
+description = "Composition root: maps config `driver` keys to driver crates (one Cargo feature per driver)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["sim"]
+# Simulated devices for the development loop and tests.
+sim = ["dep:vesta-driver-sim"]
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+vesta-core.workspace = true
+vesta-driver-sim = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true
