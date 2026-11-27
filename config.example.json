@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "home_name": "My Home",
+  "hub": {
+    "bind_address": "127.0.0.1",
+    "port": 8080,
+    "go2rtc": {
+      "api_bind_address": "127.0.0.1",
+      "api_port": 1984,
+      "webrtc_port": 8555
+    }
+  },
+  "notifications": {
+    "provider": "ntfy",
+    "endpoint": "https://ntfy.sh/your-private-topic-here"
+  },
+  "devices": [
+    {
+      "id": "front_doorbell",
+      "name": "Front Doorbell",
+      "driver": "onvif",
+      "config": {
+        "host": "192.168.1.50",
+        "username": "admin",
+        "password": "CHANGE_ME"
+      }
+    },
+    {
+      "id": "front_door_strike",
+      "name": "Front Door",
+      "driver": "shelly",
+      "config": {
+        "host": "192.168.1.51",
+        "relay_index": 0,
+        "mode": "pulse",
+        "pulse_ms": 1500
+      },
+      "endpoints": {
+        "main": { "type": "door" }
+      }
+    },
+    {
+      "id": "living_room_light",
+      "name": "Living Room Light",
+      "driver": "tuya",
+      "config": {
+        "host": "192.168.1.60",
+        "device_id": "bf1234567890abcdef",
+        "local_key": "CHANGE_ME_16_CHAR",
+        "protocol_version": "3.4"
+      }
+    },
+    {
+      "id": "living_room_fan",
+      "name": "Living Room Fan",
+      "driver": "tuya",
+      "config": {
+        "host": "192.168.1.61",
+        "device_id": "bf0987654321fedcba",
+        "local_key": "CHANGE_ME_16_CHAR",
+        "protocol_version": "3.3"
+      }
+    }
+  ]
+}
