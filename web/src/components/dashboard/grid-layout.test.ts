@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { clampSpan, effectiveColumns } from '@/components/dashboard/grid-layout'
+import { clampSpan, effectiveColumns, packsTiles } from '@/components/dashboard/grid-layout'
 
 describe('effectiveColumns', () => {
   it('keeps the requested columns when they fit', () => {
@@ -29,6 +29,18 @@ describe('effectiveColumns', () => {
     expect(effectiveColumns(0, 1_000)).toBe(1)
     expect(effectiveColumns(Number.NaN, 1_000)).toBe(1)
     expect(effectiveColumns(2.7, 1_000)).toBe(2)
+  })
+})
+
+describe('packsTiles', () => {
+  it('keeps the arranged order at the page own columns', () => {
+    expect(packsTiles(4, 4)).toBe(false)
+    expect(packsTiles(1, 1)).toBe(false)
+  })
+
+  it('fills gaps when the page is squeezed onto fewer columns', () => {
+    expect(packsTiles(4, 2)).toBe(true)
+    expect(packsTiles(4, 1)).toBe(true)
   })
 })
 

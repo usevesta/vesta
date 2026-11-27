@@ -52,6 +52,7 @@ struct Seen {
     event: usize,
     state: usize,
     availability: usize,
+    dashboard_changed: usize,
     device_config: usize,
 }
 
@@ -100,6 +101,10 @@ fn every_capabilities_md_json_example_round_trips() {
                     assert!(!availability.online);
                     seen.availability += 1;
                 }
+                ServerMessage::DashboardChanged(changed) => {
+                    assert!(!changed.revision.is_empty());
+                    seen.dashboard_changed += 1;
+                }
                 ServerMessage::Snapshot(_) => panic!("unexpected snapshot example"),
             },
             None if value.get("driver").is_some() => {
@@ -122,10 +127,11 @@ fn every_capabilities_md_json_example_round_trips() {
     assert_eq!(seen.event, 1, "{seen:?}");
     assert_eq!(seen.state, 1, "{seen:?}");
     assert_eq!(seen.availability, 1, "{seen:?}");
+    assert_eq!(seen.dashboard_changed, 1, "{seen:?}");
     assert_eq!(seen.device_config, 1, "{seen:?}");
     assert_eq!(
         blocks.len(),
-        7,
+        8,
         "new JSON example in capabilities.md: classify it here"
     );
 }

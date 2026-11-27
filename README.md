@@ -35,6 +35,10 @@ WebSocket) to the hub. If the hub runs on another port (`--port 9000`), start th
 The simulated home has lights, a ceiling fan with a light, a blind, a garage door, a door strike
 and a doorbell that rings every 3 minutes (to see the doorbell screen).
 
+Tap **Edit** on the screen to add, move, resize, rename or remove tiles and to manage pages. With
+`--dev`, changes live in memory only (restarting the hub resets the simulated home); with
+`vesta-hubd --config config.json --dashboard dashboard.json` they are saved back to that file.
+
 To look at the UI without a hub, open `http://localhost:5173/?demo=1` (a sample home with mock
 state). Add `&lang=es` to force Spanish.
 
@@ -74,7 +78,7 @@ cargo test --workspace --all-features
 
 cd web
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
-pnpm test:e2e   # end-to-end smoke test against a real vesta-hubd --dev
+pnpm test:e2e   # end-to-end tests (live control, editing the screen) against a real vesta-hubd --dev
 
 cd ../apps/tauri
 pnpm tauri build --features hub --debug --bundles app   # the app still builds

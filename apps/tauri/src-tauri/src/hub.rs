@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
-use vesta_hub::{ApiAuth, Hub, HubOptions, UiAsset, UiAssets, bind_loopback};
+use vesta_hub::{ApiAuth, Hub, HubOptions, JsonFileStore, UiAsset, UiAssets, bind_loopback};
 
 use crate::panel::Panel;
 
@@ -49,7 +49,7 @@ struct Running {
 /// Starts the Hub and returns it with the page the panel opens first.
 pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<(InProcessHub, Panel)> {
     let data_dir = app.path().app_data_dir().context("no app data directory")?;
-    let (config, dashboard) = load_home(&data_dir)?;
+    let (config, dashboard, dashboard_file) = load_home(&data_dir)?;
     let dev_url = tauri::is_dev()
         .then(|| app.config().build.dev_url.clone())
         .flatten();
@@ -64,7 +64,12 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<(InProcessHub, Pa
     }
 
     let (hub, listener) = async_runtime::block_on(async {
-        let hub = Hub::start(&config, dashboard, &Registry::builtin(), options).await?;
+        let mut hub = Hub::start(&config, dashboard, &Registry::builtin(), options).await?;
+        // Edits to a real home are saved next to its config; the simulated
+        // home keeps them in memory, like `vesta-hubd --dev`.
+        if let Some(path) = dashboard_file {
+            hub = hub.with_dashboard_store(JsonFileStore::new(path));
+        }
         let listener = match &dev_url {
             Some(_) => bind_loopback(dev_hub_addr()?).await.context(
                 "is another app or `vesta-hubd --port 8181` running? \
@@ -116,10 +121,11 @@ impl InProcessHub {
     }
 }
 
-fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard)> {
+/// The home to run and, for a real home, the file dashboard edits are saved to.
+fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard, Option<PathBuf>)> {
     let config_path = data_dir.join("config.json");
     let dashboard_path = data_dir.join("dashboard.json");
-    let (config, dashboard) = match (config_path.exists(), dashboard_path.exists()) {
+    let (config, dashboard, saved_to) = match (config_path.exists(), dashboard_path.exists()) {
         (false, false) => {
             tracing::info!(
                 dir = %data_dir.display(),
@@ -128,6 +134,7 @@ fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard)> {
             (
                 vesta_drivers::demo::CONFIG.to_owned(),
                 vesta_drivers::demo::DASHBOARD.to_owned(),
+                None,
             )
         }
         (true, true) => {
@@ -136,7 +143,11 @@ fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard)> {
                 std::fs::read_to_string(path)
                     .with_context(|| format!("could not read {}", path.display()))
             };
-            (read(&config_path)?, read(&dashboard_path)?)
+            (
+                read(&config_path)?,
+                read(&dashboard_path)?,
+                Some(dashboard_path.clone()),
+            )
         }
         _ => bail!(
             "{} needs both config.json and dashboard.json (or neither, for the simulated home)",
@@ -145,7 +156,7 @@ fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard)> {
     };
     let config = HubConfig::from_json(&config).context("invalid config.json")?;
     let dashboard = Dashboard::from_json(&dashboard).context("invalid dashboard.json")?;
-    Ok((config, dashboard))
+    Ok((config, dashboard, saved_to))
 }
 
 /// `VESTA_HUB_ORIGIN` (shared with the Vite dev server) as a socket address.
@@ -271,15 +282,21 @@ mod tests {
     #[test]
     fn runs_the_simulated_home_until_one_is_set_up() {
         let dir = temp_dir("home");
-        let (config, _) = load_home(&dir).unwrap();
+        let (config, _, saved_to) = load_home(&dir).unwrap();
         assert!(config.devices.iter().all(|device| device.driver == "sim"));
+        assert_eq!(saved_to, None, "the simulated home keeps edits in memory");
 
         std::fs::write(dir.join("config.json"), vesta_drivers::demo::CONFIG).unwrap();
         assert!(load_home(&dir).is_err(), "half a home is an error");
         std::fs::write(dir.join("dashboard.json"), "{}").unwrap();
         assert!(load_home(&dir).is_err(), "an invalid home is an error");
         std::fs::write(dir.join("dashboard.json"), vesta_drivers::demo::DASHBOARD).unwrap();
-        assert!(load_home(&dir).is_ok());
+        let (_, _, saved_to) = load_home(&dir).unwrap();
+        assert_eq!(
+            saved_to,
+            Some(dir.join("dashboard.json")),
+            "a real home saves edits"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

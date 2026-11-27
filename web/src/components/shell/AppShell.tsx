@@ -34,8 +34,8 @@ export function AppShell({ pages, activePageId, onSelectPage, banner, headerExtr
         />
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)]">
-        <header className="flex min-h-20 items-center gap-3 px-4 md:px-6">
-          <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold tracking-tight md:text-3xl">
+        <header className="flex min-h-20 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 md:px-6">
+          <h1 className="min-w-32 flex-1 truncate text-2xl font-semibold tracking-tight md:text-3xl">
             {activePage?.title ?? t('app.name')}
           </h1>
           {headerExtra}

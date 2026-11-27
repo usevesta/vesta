@@ -29,7 +29,7 @@ pub enum IdError {
     InvalidTarget(String),
 }
 
-fn validate_id(id: &str) -> Result<(), IdError> {
+pub(crate) fn validate_id(id: &str) -> Result<(), IdError> {
     if id.is_empty() {
         return Err(IdError::Empty);
     }

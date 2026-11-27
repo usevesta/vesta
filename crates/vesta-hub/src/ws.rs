@@ -1,7 +1,7 @@
 //! `GET /api/v1/ws`: one session per client.
 //!
-//! - On connect the client receives a `snapshot`, then `state`, `event` and
-//!   `availability` updates as they happen.
+//! - On connect the client receives a `snapshot`, then `state`, `event`,
+//!   `availability` and `dashboard_changed` updates as they happen.
 //! - If the session falls behind the bus (`RecvError::Lagged`), it sends a
 //!   fresh `snapshot` instead of the missed updates.
 //! - Every `command` gets exactly one `command_result`. Commands run
@@ -24,6 +24,7 @@ use vesta_core::{
 };
 
 use crate::api::AppState;
+use crate::dashboard;
 
 /// Commands are tiny; anything bigger is not a VESTA client.
 const MAX_MESSAGE_BYTES: usize = 64 * 1024;
@@ -65,6 +66,7 @@ async fn session(
 ) -> anyhow::Result<()> {
     let AppState {
         runtime,
+        dashboards,
         mut shutdown,
         ..
     } = state;
@@ -72,6 +74,8 @@ async fn session(
 
     // Subscribe before the snapshot so no update falls in between.
     let mut updates = runtime.subscribe();
+    let mut dashboard_changes = dashboards.subscribe();
+    let mut dashboard_open = true;
     send(&mut tx, &ServerMessage::Snapshot(runtime.snapshot())).await?;
 
     let mut keepalive = interval_at(Instant::now() + PING_EVERY, PING_EVERY);
@@ -105,6 +109,14 @@ async fn session(
                     send(&mut tx, &ServerMessage::Snapshot(runtime.snapshot())).await?;
                 }
                 None => return Ok(()),
+            },
+            changed = dashboard_changes.changed(), if dashboard_open => match changed {
+                Ok(()) => {
+                    let message = dashboard::changed_message(&dashboard_changes.borrow_and_update());
+                    send(&mut tx, &ServerMessage::from(message)).await?;
+                }
+                // The dashboard service is gone (shutting down).
+                Err(_) => dashboard_open = false,
             },
             Some(done) = commands.join_next() => match done {
                 Ok(result) => send(&mut tx, &ServerMessage::CommandResult(result)).await?,

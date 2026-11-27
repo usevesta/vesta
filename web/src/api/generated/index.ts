@@ -31,6 +31,7 @@ export type * from "./CoverKind";
 export type * from "./CoverMotion";
 export type * from "./CoverState";
 export type * from "./Dashboard";
+export type * from "./DashboardChanged";
 export type * from "./Device";
 export type * from "./DeviceId";
 export type * from "./DoorbellCapability";

@@ -28,6 +28,15 @@ export default defineConfig({
   },
   // Keep the app's Rust logs on screen under `pnpm tauri dev`.
   clearScreen: !RUN_BY_TAURI,
+  build: {
+    rolldownOptions: {
+      output: {
+        // Third-party code in its own chunk: the app's own code stays small
+        // and a screen keeps the libraries cached across app updates.
+        codeSplitting: { groups: [{ name: 'vendor', test: /node_modules/ }] },
+      },
+    },
+  },
   server: {
     ...(RUN_BY_TAURI ? { port: 1420, strictPort: true } : {}),
     proxy: {

@@ -21,6 +21,7 @@ pub enum ServerMessage {
     Event(EndpointEvent),
     Availability(AvailabilityChange),
     CommandResult(CommandResult),
+    DashboardChanged(DashboardChanged),
 }
 
 /// Client → Hub.
@@ -51,6 +52,16 @@ pub struct AvailabilityChange {
     pub online: bool,
 }
 
+/// The dashboard was saved (from this or another screen or phone):
+/// `{ "type": "dashboard_changed", "revision": "..." }`. Screens that are not
+/// being edited reload `GET /api/v1/dashboard`; `revision` is that
+/// response's `ETag` without the quotes, so a screen that already shows it
+/// (e.g. the one that saved) can skip the reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DashboardChanged {
+    pub revision: String,
+}
+
 impl From<Snapshot> for ServerMessage {
     fn from(value: Snapshot) -> Self {
         Self::Snapshot(value)
@@ -78,5 +89,11 @@ impl From<AvailabilityChange> for ServerMessage {
 impl From<CommandResult> for ServerMessage {
     fn from(value: CommandResult) -> Self {
         Self::CommandResult(value)
+    }
+}
+
+impl From<DashboardChanged> for ServerMessage {
+    fn from(value: DashboardChanged) -> Self {
+        Self::DashboardChanged(value)
     }
 }

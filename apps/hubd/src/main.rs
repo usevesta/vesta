@@ -2,7 +2,7 @@
 //! the development loop.
 //!
 //! ```sh
-//! cargo run -p vesta-hubd -- --dev                      # simulated home, no sign-in
+//! cargo run -p vesta-hubd -- --dev                      # simulated home, no sign-in, edits in memory
 //! vesta-hubd --config config.json --dashboard dashboard.json --ui web/dist
 //! ```
 //!
@@ -22,7 +22,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
-use vesta_hub::{ApiAuth, Hub, HubOptions, LOGIN_CODE_TTL, UiFiles, bind_loopback};
+use vesta_hub::{ApiAuth, Hub, HubOptions, JsonFileStore, LOGIN_CODE_TTL, UiFiles, bind_loopback};
 
 /// The simulated home used by `--dev`. No secrets: every device uses the
 /// `sim` driver.
@@ -41,7 +41,8 @@ struct Args {
     )]
     config: Option<PathBuf>,
 
-    /// Dashboard (`dashboard.json`).
+    /// Dashboard (`dashboard.json`). Changes made on screen are saved back
+    /// to this file.
     #[arg(
         long,
         value_name = "PATH",
@@ -168,7 +169,11 @@ async fn main() -> anyhow::Result<()> {
     }
     let addr = SocketAddr::new(config.hub.bind_address, config.hub.port);
 
-    let hub = Hub::start(&config, dashboard, &Registry::builtin(), options(&args)?).await?;
+    let mut hub = Hub::start(&config, dashboard, &Registry::builtin(), options(&args)?).await?;
+    // `--dev` keeps edits in memory: a restart resets the simulated home.
+    if let Some(path) = &args.dashboard {
+        hub = hub.with_dashboard_store(JsonFileStore::new(path));
+    }
     let listener = bind_loopback(addr).await?;
     if let Some(codes) = hub.login_codes() {
         let local = listener.local_addr()?;
