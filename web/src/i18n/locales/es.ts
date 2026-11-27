@@ -101,6 +101,7 @@ export const es: Translation = {
     noPagesTitle: 'Aún no hay páginas',
     noPagesBody: 'Añade una página para empezar.',
     unnamed: 'Sin nombre',
+    unknownTile: 'Recuadro desconocido',
     notFound: 'No se encuentra en tu casa',
     clock: 'Reloj y fecha',
     size: {

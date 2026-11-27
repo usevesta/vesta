@@ -33,7 +33,7 @@ export function PagesDialog({
 }: PagesDialogProps) {
   const { t } = useTranslation()
   const full = pages.length >= MAX_PAGES
-  const iconButton = 'size-14 rounded-xl [&_svg]:size-6'
+  const iconButton = 'size-14 rounded-xl'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -88,7 +88,7 @@ export function PagesDialog({
                       editDraft({ type: 'movePage', pageId: page.id, by: -1 })
                     }}
                   >
-                    <Icon name="move_up" />
+                    <Icon name="move_up" className="size-6" />
                   </Button>
                   <Button
                     variant="secondary"
@@ -99,7 +99,7 @@ export function PagesDialog({
                       editDraft({ type: 'movePage', pageId: page.id, by: 1 })
                     }}
                   >
-                    <Icon name="move_down" />
+                    <Icon name="move_down" className="size-6" />
                   </Button>
                   <Button
                     variant="secondary"
@@ -110,7 +110,7 @@ export function PagesDialog({
                       onRenamePage(page)
                     }}
                   >
-                    <Icon name="rename" />
+                    <Icon name="rename" className="size-6" />
                   </Button>
                   <Button
                     variant="destructive"
@@ -121,7 +121,7 @@ export function PagesDialog({
                       onRemovePage(page)
                     }}
                   >
-                    <Icon name="remove" />
+                    <Icon name="remove" className="size-6" />
                   </Button>
                 </div>
               </li>
@@ -129,8 +129,8 @@ export function PagesDialog({
           })}
         </ol>
 
-        <Button className="h-auto min-h-14 gap-2 text-lg [&_svg]:size-6" disabled={disabled || full} onClick={onAddPage}>
-          <Icon name="add" />
+        <Button className="h-auto min-h-14 gap-2 text-lg" disabled={disabled || full} onClick={onAddPage}>
+          <Icon name="add" className="size-6" />
           {t('editor.pageList.add')}
         </Button>
         {full && <p className="text-center text-sm text-muted-foreground">{t('editor.pageList.full')}</p>}

@@ -21,7 +21,8 @@ export function useDescribeTile(): (widget: Widget, item: HomeItem | undefined, 
   return (widget, item, itemsReady) => {
     const label = widgetLabel(widget)
     if (!isWidgetType(widget.type)) {
-      return { name: label ?? t('unknownWidget.title'), ownName: undefined, icon: 'unknown' }
+      // A tile from a newer version of the app: it can still be moved or removed.
+      return { name: label ?? t('editor.unknownTile'), ownName: undefined, detail: t('unknownWidget.body'), icon: 'unknown' }
     }
     const meta = widgetMeta[widget.type]
     if (widget.target === undefined) {

@@ -56,8 +56,8 @@ export function EditTile({
   const move = (by: -1 | 1) => {
     editDraft({ type: 'moveWidget', pageId, key, by })
   }
-  const iconButton = 'size-14 rounded-xl [&_svg]:size-6'
-  const textButton = 'h-14 min-w-14 gap-2 rounded-xl px-3 text-base [&_svg]:size-6'
+  const iconButton = 'size-14 rounded-xl'
+  const textButton = 'h-14 min-w-14 gap-2 rounded-xl px-3 text-base'
 
   return (
     <Card
@@ -95,7 +95,7 @@ export function EditTile({
             move(-1)
           }}
         >
-          <Icon name="move_earlier" />
+          <Icon name="move_earlier" className="size-6" />
         </Button>
         <Button
           variant="secondary"
@@ -106,7 +106,7 @@ export function EditTile({
             move(1)
           }}
         >
-          <Icon name="move_later" />
+          <Icon name="move_later" className="size-6" />
         </Button>
         <Button
           variant="secondary"
@@ -117,7 +117,7 @@ export function EditTile({
             editDraft({ type: 'resizeWidget', pageId, key, size: nextSize(span, columns) })
           }}
         >
-          <Icon name="resize" />
+          <Icon name="resize" className="size-6" />
           <span className="hidden @[22rem]:inline">{sizeLabel}</span>
         </Button>
         <Button
@@ -127,7 +127,7 @@ export function EditTile({
           aria-label={t('editor.tile.renameLabel', { name })}
           onClick={onRename}
         >
-          <Icon name="rename" />
+          <Icon name="rename" className="size-6" />
           <span className="hidden @[30rem]:inline">{t('editor.tile.rename')}</span>
         </Button>
         <Button
@@ -137,7 +137,7 @@ export function EditTile({
           aria-label={t('editor.tile.removeLabel', { name })}
           onClick={onRemove}
         >
-          <Icon name="remove" />
+          <Icon name="remove" className="size-6" />
           <span className="hidden @[30rem]:inline">{t('editor.tile.remove')}</span>
         </Button>
       </div>

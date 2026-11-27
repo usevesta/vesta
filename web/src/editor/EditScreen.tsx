@@ -119,6 +119,8 @@ export function EditScreen({
     toast(t('editor.tile.removed', { name }), {
       id: `removed:${entry.key}`,
       duration: 6_000,
+      // Big enough to hit on a wall panel.
+      classNames: { actionButton: 'h-12! rounded-lg! px-4! text-base!' },
       action: {
         label: t('editor.tile.undo'),
         onClick: () => {
@@ -134,13 +136,13 @@ export function EditScreen({
       <div className="flex h-full flex-col items-center justify-center gap-6">
         <EmptyState icon="pages" title={t('editor.noPagesTitle')} body={t('editor.noPagesBody')} />
         <Button
-          className="h-auto min-h-14 gap-2 px-6 text-lg [&_svg]:size-6"
+          className="h-auto min-h-14 gap-2 px-6 text-lg"
           disabled={saving}
           onClick={() => {
             setDialog({ kind: 'addPage' })
           }}
         >
-          <Icon name="add" />
+          <Icon name="add" className="size-6" />
           {t('editor.pageList.add')}
         </Button>
       </div>
@@ -148,7 +150,7 @@ export function EditScreen({
   } else {
     const count = page.widgets.length
     content = (
-      <DashboardGrid columns={page.grid_columns}>
+      <DashboardGrid columns={page.grid_columns} keepOrder>
         {page.widgets.map((entry, index) => {
           const description = describeEntry(entry)
           return (
@@ -175,13 +177,13 @@ export function EditScreen({
         <DashboardGridItem colSpan={1} rowSpan={1}>
           <Button
             variant="outline"
-            className="h-full min-h-36 w-full flex-col gap-2 rounded-xl border-2 border-dashed text-lg [&_svg]:size-8"
+            className="h-full min-h-36 w-full flex-col gap-2 rounded-xl border-2 border-dashed text-lg"
             disabled={saving}
             onClick={() => {
               setAddOpen(true)
             }}
           >
-            <Icon name="add" />
+            <Icon name="add" className="size-8" />
             {t('editor.add')}
           </Button>
         </DashboardGridItem>

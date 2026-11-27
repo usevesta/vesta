@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 
 import type { Target, Widget } from '@/api/generated'
 import { Icon } from '@/components/Icon'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { extraWidget, groupByRoom, widgetForItem, type HomeItem } from '@/editor/model'
@@ -28,15 +27,17 @@ function ItemButton({
   icon,
   name,
   detail,
-  badge,
+  onPage = false,
   onClick,
 }: {
   icon: IconName
   name: string
   detail?: string
-  badge?: ReactNode
+  /** Already shown on this page (it can still be added again). */
+  onPage?: boolean
   onClick: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <li>
       <Button
@@ -49,10 +50,19 @@ function ItemButton({
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-lg font-medium">{name}</span>
-          {detail !== undefined && <span className="truncate text-sm text-muted-foreground">{detail}</span>}
+          {(detail !== undefined || onPage) && (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
+              {detail !== undefined && <span className="max-w-full truncate">{detail}</span>}
+              {onPage && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-primary">
+                  <Icon name="check" className="size-4" />
+                  {t('editor.addSheet.onPage')}
+                </span>
+              )}
+            </span>
+          )}
         </span>
-        {badge}
-        <Icon name="add" className="size-6 text-muted-foreground" />
+        <Icon name="add" className="size-6 shrink-0 text-muted-foreground" />
       </Button>
     </li>
   )
@@ -105,13 +115,7 @@ export function AddSheet({ open, onOpenChange, pageTitle, columns, items, itemsR
             icon={isIconName(item.type) ? item.type : 'unknown'}
             name={item.name}
             detail={item.partOf}
-            badge={
-              onPage.has(item.target) ? (
-                <Badge variant="secondary" className="h-auto shrink-0 px-2 py-1 text-sm">
-                  {t('editor.addSheet.onPage')}
-                </Badge>
-              ) : undefined
-            }
+            onPage={onPage.has(item.target)}
             onClick={() => {
               const widget = widgetForItem(item, columns)
               if (widget !== null) onAdd(widget, item.name)

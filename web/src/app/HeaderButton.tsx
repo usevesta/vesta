@@ -26,13 +26,13 @@ export function HeaderButton({
   return (
     <Button
       variant={variant}
-      className="h-14 min-w-14 gap-2 rounded-xl px-4 text-base [&_svg]:size-6"
+      className="h-14 min-w-14 gap-2 rounded-xl px-4 text-base"
       aria-label={label}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       onClick={onClick}
     >
-      <Icon name={busy ? 'loading' : icon} className={busy ? 'motion-safe:animate-spin' : undefined} />
+      <Icon name={busy ? 'loading' : icon} className={busy ? 'size-6 motion-safe:animate-spin' : 'size-6'} />
       <span className={compact ? 'hidden sm:inline' : undefined}>{label}</span>
     </Button>
   )

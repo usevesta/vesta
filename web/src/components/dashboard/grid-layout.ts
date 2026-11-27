@@ -28,6 +28,16 @@ export function effectiveColumns(
   return Math.min(columns, Math.max(fits, 1))
 }
 
+/**
+ * Fill gaps with later tiles only when the page is squeezed onto fewer
+ * columns than it was arranged for (phones). At its own columns a page
+ * keeps exactly the order it was arranged in, so the screen looks like
+ * the editor showed it.
+ */
+export function packsTiles(requested: number, visible: number): boolean {
+  return visible < toPositiveInt(requested, 1)
+}
+
 /** Clamp a requested span to `[1, columns]`. Missing or invalid spans are 1. */
 export function clampSpan(span: number | undefined, columns: number): number {
   return Math.min(toPositiveInt(span, 1), Math.max(1, columns))

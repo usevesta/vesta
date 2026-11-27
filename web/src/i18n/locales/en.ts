@@ -102,6 +102,7 @@ export const en = {
     noPagesTitle: 'No pages yet',
     noPagesBody: 'Add a page to start.',
     unnamed: 'No name',
+    unknownTile: 'Unknown tile',
     notFound: 'Not found in your home',
     clock: 'Clock and date',
     size: {
