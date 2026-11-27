@@ -28,10 +28,7 @@
         {
           "type": "clock-weather",
           "col_span": 2,
-          "row_span": 1,
-          "props": {
-            "location": "Madrid, ES"
-          }
+          "row_span": 1
         },
         {
           "type": "door-button",
@@ -39,7 +36,7 @@
           "col_span": 2,
           "row_span": 1,
           "props": {
-            "label": "Open Front Door"
+            "label": "Front Door"
           }
         },
         {

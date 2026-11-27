@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "theme": {
+    "preset": "glass-dark",
+    "auto_dark_mode": true,
+    "touch_scale": "large"
+  },
+  "kiosk": {
+    "screensaver_timeout_sec": 120,
+    "wake_on": [
+      { "target": "front_doorbell/main", "event": "doorbell.pressed" },
+      { "target": "front_doorbell/main", "event": "occupancy.detected" }
+    ]
+  },
+  "doorbell_overlay": {
+    "doorbell_target": "front_doorbell/main",
+    "camera_target": "front_doorbell/main",
+    "open_target": "front_door_strike/main",
+    "auto_dismiss_sec": 45
+  },
+  "pages": [
+    {
+      "id": "home",
+      "title": "Home",
+      "icon": "home",
+      "grid_columns": 4,
+      "widgets": [
+        { "type": "clock-weather", "col_span": 2, "row_span": 1 },
+        {
+          "type": "door-button",
+          "target": "front_door_strike/main",
+          "col_span": 2,
+          "row_span": 1,
+          "props": { "label": "Front Door" }
+        },
+        {
+          "type": "camera-preview",
+          "target": "front_doorbell/main",
+          "col_span": 2,
+          "row_span": 2,
+          "props": { "live_webrtc": true }
+        },
+        {
+          "type": "light-control",
+          "target": "living_room_light/main",
+          "col_span": 2,
+          "row_span": 1,
+          "props": { "label": "Living Room" }
+        },
+        {
+          "type": "fan-control",
+          "target": "living_room_fan/fan",
+          "col_span": 1,
+          "row_span": 1
+        },
+        {
+          "type": "light-control",
+          "target": "living_room_fan/light",
+          "col_span": 1,
+          "row_span": 1,
+          "props": { "label": "Fan Light" }
+        }
+      ]
+    },
+    {
+      "id": "house",
+      "title": "Blinds & Doors",
+      "icon": "blind",
+      "grid_columns": 4,
+      "widgets": [
+        {
+          "type": "cover-control",
+          "target": "bedroom_blind/main",
+          "col_span": 2,
+          "row_span": 2,
+          "props": { "label": "Bedroom Blind" }
+        },
+        {
+          "type": "cover-control",
+          "target": "garage_door/main",
+          "col_span": 2,
+          "row_span": 2,
+          "props": { "label": "Garage" }
+        },
+        {
+          "type": "door-button",
+          "target": "front_door_strike/main",
+          "col_span": 4,
+          "row_span": 1,
+          "props": { "label": "Front Door" }
+        }
+      ]
+    }
+  ]
+}

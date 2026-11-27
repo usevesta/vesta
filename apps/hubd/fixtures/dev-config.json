@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "home_name": "Demo Home",
+  "hub": {
+    "bind_address": "127.0.0.1",
+    "port": 8080
+  },
+  "devices": [
+    {
+      "id": "living_room_light",
+      "name": "Living Room Light",
+      "room": "living_room",
+      "driver": "sim",
+      "config": { "model": "light", "latency_ms": 150, "failure_rate": 0.0 }
+    },
+    {
+      "id": "living_room_fan",
+      "name": "Living Room Fan",
+      "room": "living_room",
+      "driver": "sim",
+      "config": { "model": "ceiling_fan" },
+      "endpoints": {
+        "fan": { "name": "Ceiling Fan" },
+        "light": { "name": "Fan Light" }
+      }
+    },
+    {
+      "id": "bedroom_blind",
+      "name": "Bedroom Blind",
+      "room": "bedroom",
+      "driver": "sim",
+      "config": { "model": "blind" }
+    },
+    {
+      "id": "garage_door",
+      "name": "Garage Door",
+      "room": "garage",
+      "driver": "sim",
+      "config": { "model": "garage_door" }
+    },
+    {
+      "id": "front_door_strike",
+      "name": "Front Door",
+      "room": "entrance",
+      "driver": "sim",
+      "config": { "model": "door_strike" },
+      "endpoints": {
+        "main": { "type": "door" }
+      }
+    },
+    {
+      "id": "front_doorbell",
+      "name": "Front Doorbell",
+      "room": "entrance",
+      "driver": "sim",
+      "config": { "model": "doorbell", "ring_every_sec": 180 }
+    }
+  ]
+}
