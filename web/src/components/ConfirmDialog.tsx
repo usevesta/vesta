@@ -20,6 +20,10 @@ export interface ConfirmDialogProps {
   title: string
   description: string
   confirmLabel: string
+  /** Default "Cancel". */
+  cancelLabel?: string
+  /** `destructive` for removing things. */
+  confirmVariant?: 'default' | 'destructive'
   icon?: IconName
   /** Runs only when the person confirms. Cancel is focused by default. */
   onConfirm: () => void
@@ -32,6 +36,8 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  cancelLabel,
+  confirmVariant = 'default',
   icon,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -49,8 +55,10 @@ export function ConfirmDialog({
           <AlertDialogDescription className="text-base">{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="-mx-6 -mb-6 p-6">
-          <AlertDialogCancel className="h-auto min-h-14 flex-1 text-lg">{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction className="h-auto min-h-14 flex-1 text-lg" onClick={onConfirm}>
+          <AlertDialogCancel className="h-auto min-h-14 flex-1 text-lg">
+            {cancelLabel ?? t('common.cancel')}
+          </AlertDialogCancel>
+          <AlertDialogAction variant={confirmVariant} className="h-auto min-h-14 flex-1 text-lg" onClick={onConfirm}>
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

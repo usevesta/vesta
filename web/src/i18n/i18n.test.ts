@@ -53,6 +53,7 @@ describe('translations', () => {
       /\bwebsockets?\b/i,
       /\bapi\b/i,
       /\bjson\b/i,
+      /\bwidgets?\b/i,
     ]
     for (const [key, text] of [...EN, ...ES]) {
       for (const pattern of forbidden) {

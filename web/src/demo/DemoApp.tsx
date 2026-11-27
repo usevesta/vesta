@@ -1,225 +1,202 @@
-import { useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { DashboardGrid, DashboardGridItem } from '@/components/dashboard/DashboardGrid'
+import type { Widget } from '@/api/generated'
+import { DashboardScreen } from '@/app/DashboardScreen'
 import { Icon } from '@/components/Icon'
-import { AppShell } from '@/components/shell/AppShell'
-import type { ShellPage } from '@/components/shell/PageNav'
 import { Badge } from '@/components/ui/badge'
 import {
-  useDemoStore,
-  type DemoCoverId,
-  type DemoLightId,
-  type DemoState,
-} from '@/demo/demo-store'
-import type { IconName } from '@/lib/icons'
-import type { AnyWidgetSpec, WidgetSpec } from '@/widgets/registry'
+  DEMO_ENTRY_BY_TARGET,
+  demoDashboard,
+  demoItems,
+  demoName,
+  saveDemoDashboard,
+  useDemoDashboardStore,
+  type DemoThing,
+} from '@/demo/demo-home'
+import { useDemoStore, type DemoState } from '@/demo/demo-store'
+import { widgetLabel } from '@/editor/model'
+import { isWidgetType, type AnyWidgetSpec, type WidgetSpec } from '@/widgets/registry'
+import { UnknownWidget } from '@/widgets/UnknownWidget'
 import { WidgetView } from '@/widgets/WidgetView'
 
-type DemoPageId = 'home' | 'livingRoom' | 'outside'
-
-interface DemoTile {
-  key: string
-  colSpan: number
-  rowSpan: number
-  spec: WidgetSpec | AnyWidgetSpec
+/** Presentational props for one sample thing, from the mock state. */
+function demoSpec(
+  thing: DemoThing,
+  label: string,
+  demo: DemoState,
+  run: (name: string, command: Promise<boolean>) => void,
+  onDoorOpened: (name: string) => void,
+): WidgetSpec {
+  switch (thing.kind) {
+    case 'light': {
+      const { id } = thing
+      const state = demo.lights[id]
+      return {
+        type: 'light-control',
+        props: {
+          label,
+          on: state.on,
+          brightness: state.brightness,
+          colorTemperature: state.colorTemperature,
+          pending: state.pending,
+          unavailable: state.unavailable,
+          onToggle: (on) => {
+            run(label, demo.setLight(id, { on }))
+          },
+          onBrightnessChange: (brightness) => {
+            // Dimming a light that is off switches it on.
+            run(label, demo.setLight(id, { brightness, on: true }))
+          },
+          onColorTemperatureChange: (kelvin) => {
+            const current = state.colorTemperature
+            if (current === undefined) return
+            run(label, demo.setLight(id, { colorTemperature: { ...current, kelvin }, on: true }))
+          },
+        },
+      }
+    }
+    case 'fan': {
+      const { id } = thing
+      const fan = demo.fans[id]
+      return {
+        type: 'fan-control',
+        props: {
+          label,
+          on: fan.on,
+          speed: fan.speed,
+          speedSteps: fan.speedSteps,
+          direction: fan.direction,
+          pending: fan.pending,
+          onToggle: (on) => {
+            run(label, demo.setFan(id, { on }))
+          },
+          onSpeedChange: (speed) => {
+            run(label, demo.setFan(id, { speed, on: true }))
+          },
+          onDirectionChange: (direction) => {
+            run(label, demo.setFan(id, { direction }))
+          },
+        },
+      }
+    }
+    case 'cover': {
+      const { id } = thing
+      const state = demo.covers[id]
+      return {
+        type: 'cover-control',
+        props: {
+          label,
+          icon: thing.icon,
+          sensitive: thing.sensitive,
+          position: state.position,
+          isOpen: state.isOpen,
+          motion: state.motion,
+          pending: state.pending,
+          onOpen: () => {
+            demo.moveCover(id, 'open')
+          },
+          onClose: () => {
+            demo.moveCover(id, 'close')
+          },
+          onStop: () => {
+            demo.moveCover(id, 'stop')
+          },
+          onPositionChange:
+            state.position === undefined
+              ? undefined
+              : (position) => {
+                  demo.moveCover(id, position)
+                },
+        },
+      }
+    }
+    case 'door': {
+      const { id } = thing
+      return {
+        type: 'door-button',
+        props: {
+          label,
+          pending: demo.doors[id].pending,
+          onOpen: () => {
+            void demo.openDoor(id).then((ok) => {
+              if (ok) onDoorOpened(label)
+            })
+          },
+        },
+      }
+    }
+    case 'camera':
+      return { type: 'camera-preview', props: { label, unavailable: thing.unavailable } }
+  }
 }
 
-interface DemoPage {
-  columns: number
-  tiles: DemoTile[]
+/** One tile of the sample home. */
+function DemoWidget({ widget }: { widget: Widget }) {
+  const { t } = useTranslation()
+  const demo = useDemoStore()
+
+  if (!isWidgetType(widget.type)) {
+    const unknown: AnyWidgetSpec = { type: widget.type, props: widget.props }
+    return <WidgetView spec={unknown} />
+  }
+  if (widget.type === 'clock-weather') {
+    return <WidgetView spec={{ type: 'clock-weather', props: { label: widgetLabel(widget) } }} />
+  }
+  const entry = widget.target === undefined ? undefined : DEMO_ENTRY_BY_TARGET.get(widget.target)
+  if (entry === undefined) return <UnknownWidget type={widget.type} />
+
+  const label = widgetLabel(widget) ?? demoName(entry, t)
+  const spec = demoSpec(
+    entry.thing,
+    label,
+    demo,
+    (name, command) => {
+      void command.then((ok) => {
+        if (!ok) toast.error(t('widget.commandFailed', { name }))
+      })
+    },
+    (name) => {
+      toast.success(t('door.opened', { name }))
+    },
+  )
+  return <WidgetView spec={spec} />
 }
 
 /**
- * Sample home rendered from local mock state, so the UI can be reviewed
- * without a running home. Opened with `?demo=1`.
+ * Sample home rendered from local mock state, so the UI (and the screen
+ * editor) can be tried without a running home. Opened with `?demo=1`.
+ * Edits stay in this browser tab.
  */
 export function DemoApp() {
   const { t } = useTranslation()
-  const [pageId, setPageId] = useState<DemoPageId>('home')
-  const demo: DemoState = useDemoStore()
+  const dashboard = useDemoDashboardStore((s) => s.dashboard)
+  const revision = useDemoDashboardStore((s) => s.revision)
+  const items = useMemo(() => demoItems(t), [t])
 
-  const run = (name: string, command: Promise<boolean>) => {
-    void command.then((ok) => {
-      if (!ok) toast.error(t('widget.commandFailed', { name }))
-    })
-  }
-
-  const light = (id: DemoLightId, label: string): WidgetSpec<'light-control'> => {
-    const state = demo.lights[id]
-    return {
-      type: 'light-control',
-      props: {
-        label,
-        on: state.on,
-        brightness: state.brightness,
-        colorTemperature: state.colorTemperature,
-        pending: state.pending,
-        unavailable: state.unavailable,
-        onToggle: (on) => {
-          run(label, demo.setLight(id, { on }))
-        },
-        onBrightnessChange: (brightness) => {
-          // Dimming a light that is off switches it on.
-          run(label, demo.setLight(id, { brightness, on: true }))
-        },
-        onColorTemperatureChange: (kelvin) => {
-          const current = state.colorTemperature
-          if (current === undefined) return
-          run(label, demo.setLight(id, { colorTemperature: { ...current, kelvin }, on: true }))
-        },
-      },
+  useEffect(() => {
+    // Built once, in the language the screen starts in (like a real home).
+    if (useDemoDashboardStore.getState().dashboard === null) {
+      useDemoDashboardStore.setState({ dashboard: demoDashboard(t) })
     }
-  }
-
-  const cover = (
-    id: DemoCoverId,
-    label: string,
-    icon: IconName,
-    sensitive = false,
-  ): WidgetSpec<'cover-control'> => {
-    const state = demo.covers[id]
-    return {
-      type: 'cover-control',
-      props: {
-        label,
-        icon,
-        sensitive,
-        position: state.position,
-        isOpen: state.isOpen,
-        motion: state.motion,
-        pending: state.pending,
-        onOpen: () => {
-          demo.moveCover(id, 'open')
-        },
-        onClose: () => {
-          demo.moveCover(id, 'close')
-        },
-        onStop: () => {
-          demo.moveCover(id, 'stop')
-        },
-        onPositionChange:
-          state.position === undefined
-            ? undefined
-            : (position) => {
-                demo.moveCover(id, position)
-              },
-      },
-    }
-  }
-
-  const fan = demo.fans.ceiling
-  const ceilingFanLabel = t('demo.devices.ceilingFan')
-  const ceilingFan: WidgetSpec<'fan-control'> = {
-    type: 'fan-control',
-    props: {
-      label: ceilingFanLabel,
-      on: fan.on,
-      speed: fan.speed,
-      speedSteps: fan.speedSteps,
-      direction: fan.direction,
-      pending: fan.pending,
-      onToggle: (on) => {
-        run(ceilingFanLabel, demo.setFan('ceiling', { on }))
-      },
-      onSpeedChange: (speed) => {
-        run(ceilingFanLabel, demo.setFan('ceiling', { speed, on: true }))
-      },
-      onDirectionChange: (direction) => {
-        run(ceilingFanLabel, demo.setFan('ceiling', { direction }))
-      },
-    },
-  }
-
-  const frontDoorLabel = t('demo.devices.frontDoor')
-  const frontDoor: WidgetSpec<'door-button'> = {
-    type: 'door-button',
-    props: {
-      label: frontDoorLabel,
-      pending: demo.doors.front.pending,
-      onOpen: () => {
-        void demo.openDoor('front').then((ok) => {
-          if (ok) toast.success(t('door.opened', { name: frontDoorLabel }))
-        })
-      },
-    },
-  }
-
-  const clock: WidgetSpec<'clock-weather'> = {
-    type: 'clock-weather',
-    props: { label: t('demo.devices.clockPlace') },
-  }
-
-  const camera = (label: string, unavailable = false): WidgetSpec<'camera-preview'> => ({
-    type: 'camera-preview',
-    props: { label, unavailable },
-  })
-
-  const pages: Record<DemoPageId, DemoPage> = {
-    home: {
-      columns: 4,
-      tiles: [
-        { key: 'clock', colSpan: 2, rowSpan: 1, spec: clock },
-        { key: 'front-door', colSpan: 2, rowSpan: 1, spec: frontDoor },
-        { key: 'front-camera', colSpan: 2, rowSpan: 2, spec: camera(t('demo.devices.frontDoorCamera')) },
-        { key: 'living-light', colSpan: 2, rowSpan: 1, spec: light('livingRoom', t('demo.devices.livingRoomLight')) },
-        { key: 'garage', colSpan: 2, rowSpan: 1, spec: cover('garage', t('demo.devices.garageDoor'), 'garage_door', true) },
-      ],
-    },
-    livingRoom: {
-      columns: 4,
-      tiles: [
-        { key: 'living-light', colSpan: 2, rowSpan: 1, spec: light('livingRoom', t('demo.devices.livingRoomLight')) },
-        { key: 'ceiling-fan', colSpan: 2, rowSpan: 1, spec: ceilingFan },
-        { key: 'fan-light', colSpan: 2, rowSpan: 1, spec: light('fanLight', t('demo.devices.fanLight')) },
-        { key: 'blind', colSpan: 2, rowSpan: 1, spec: cover('bedroomBlind', t('demo.devices.bedroomBlind'), 'blind') },
-        { key: 'kitchen', colSpan: 1, rowSpan: 1, spec: light('kitchen', t('demo.devices.kitchenLight')) },
-        { key: 'hallway', colSpan: 1, rowSpan: 1, spec: light('hallway', t('demo.devices.hallwayLight')) },
-      ],
-    },
-    outside: {
-      columns: 4,
-      tiles: [
-        { key: 'garage', colSpan: 2, rowSpan: 1, spec: cover('garage', t('demo.devices.garageDoor'), 'garage_door', true) },
-        { key: 'awning', colSpan: 2, rowSpan: 1, spec: cover('patioAwning', t('demo.devices.patioAwning'), 'window_covering') },
-        { key: 'porch', colSpan: 2, rowSpan: 1, spec: light('porch', t('demo.devices.porchLight')) },
-        { key: 'garden-camera', colSpan: 2, rowSpan: 2, spec: camera(t('demo.devices.gardenCamera'), true) },
-        // A widget type this version does not know: shows the placeholder.
-        { key: 'future', colSpan: 2, rowSpan: 1, spec: { type: 'thermostat-control', props: {} } },
-      ],
-    },
-  }
-
-  const shellPages: ShellPage[] = [
-    { id: 'home', title: t('demo.pages.home'), icon: 'home' },
-    { id: 'livingRoom', title: t('demo.pages.livingRoom'), icon: 'living_room' },
-    { id: 'outside', title: t('demo.pages.outside'), icon: 'garden' },
-  ]
-
-  const page = pages[pageId]
+  }, [t])
 
   return (
-    <AppShell
-      pages={shellPages}
-      activePageId={pageId}
-      onSelectPage={(id) => {
-        if (id === 'home' || id === 'livingRoom' || id === 'outside') setPageId(id)
-      }}
+    <DashboardScreen
+      dashboard={dashboard}
+      revision={revision}
+      placeholder={null}
+      renderWidget={(widget) => <DemoWidget widget={widget} />}
+      items={items}
+      itemsReady
+      save={saveDemoDashboard}
       headerExtra={
         <Badge variant="secondary" className="h-auto gap-1.5 px-3 py-1.5 text-sm" title={t('demo.notice')}>
           <Icon name="demo" />
           {t('demo.badge')}
         </Badge>
       }
-    >
-      <DashboardGrid columns={page.columns}>
-        {page.tiles.map((tile) => (
-          <DashboardGridItem key={tile.key} colSpan={tile.colSpan} rowSpan={tile.rowSpan}>
-            <WidgetView spec={tile.spec} />
-          </DashboardGridItem>
-        ))}
-      </DashboardGrid>
-    </AppShell>
+    />
   )
 }

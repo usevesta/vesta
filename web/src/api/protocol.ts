@@ -252,6 +252,10 @@ export function decodeServerMessage(value: unknown): ServerMessage | null {
       const result = decodeCommandResult(value)
       return result === null ? null : { type: 'command_result', ...result }
     }
+    case 'dashboard_changed': {
+      const { revision } = value
+      return isString(revision) && revision !== '' ? { type: 'dashboard_changed', revision } : null
+    }
     default:
       return null
   }

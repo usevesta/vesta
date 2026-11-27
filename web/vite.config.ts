@@ -18,6 +18,15 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        // Third-party code in its own chunk: the app's own code stays small
+        // and a screen keeps the libraries cached across app updates.
+        codeSplitting: { groups: [{ name: 'vendor', test: /node_modules/ }] },
+      },
+    },
+  },
   server: {
     proxy: {
       // HTTP base is `/api/v1`; the WebSocket lives at `/api/v1/ws`.
