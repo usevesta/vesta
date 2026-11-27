@@ -1,5 +1,7 @@
 # VESTA
 
+[![CI](https://github.com/usevesta/vesta/actions/workflows/ci.yml/badge.svg)](https://github.com/usevesta/vesta/actions/workflows/ci.yml)
+
 Local-first smart home wall panel built with Tauri v2, Rust and React. An appliance, not a
 platform: install it, scan a QR code, hang it on the wall.
 
