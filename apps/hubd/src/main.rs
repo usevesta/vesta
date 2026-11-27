@@ -2,22 +2,27 @@
 //! the development loop.
 //!
 //! ```sh
-//! cargo run -p vesta-hubd -- --dev                      # simulated home
-//! vesta-hubd --config config.json --dashboard dashboard.json
+//! cargo run -p vesta-hubd -- --dev                      # simulated home, no sign-in
+//! vesta-hubd --config config.json --dashboard dashboard.json --ui web/dist
 //! ```
 //!
 //! Listens on loopback only (`127.0.0.1:8080` by default). Logs go to
 //! stderr; set `RUST_LOG` to change the level (e.g. `RUST_LOG=debug`).
+//!
+//! Without `--dev` the API needs a session: at start-up the hub logs a
+//! one-time sign-in URL (single use, valid for 60 s) to open in a browser
+//! on this machine. `--dev` turns sign-in off (development only).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
-use vesta_hub::{Hub, HubOptions, bind_loopback};
+use vesta_hub::{ApiAuth, Hub, HubOptions, LOGIN_CODE_TTL, UiFiles, bind_loopback};
 
 /// The simulated home used by `--dev`. No secrets: every device uses the
 /// `sim` driver.
@@ -49,9 +54,20 @@ struct Args {
     #[arg(long)]
     port: Option<u16>,
 
-    /// Run the built-in simulated home (no hardware, no config files).
+    /// Run the built-in simulated home (no hardware, no config files) with
+    /// sign-in turned off. Development only.
     #[arg(long)]
     dev: bool,
+
+    /// Serve the wall-panel UI from DIR (a `web/dist` build) on the hub's
+    /// own address.
+    #[arg(long, value_name = "DIR")]
+    ui: Option<PathBuf>,
+
+    /// Another page origin that may use a session, exactly, e.g.
+    /// `http://localhost:5173` for the Vite dev UI. Repeatable.
+    #[arg(long, value_name = "ORIGIN", conflicts_with = "dev")]
+    allow_origin: Vec<String>,
 }
 
 fn read(path: &Path) -> anyhow::Result<String> {
@@ -79,6 +95,28 @@ fn load(args: &Args) -> anyhow::Result<(HubConfig, Dashboard)> {
     let dashboard =
         Dashboard::from_json(&dashboard).with_context(|| format!("invalid {dashboard_source}"))?;
     Ok((config, dashboard))
+}
+
+fn options(args: &Args) -> anyhow::Result<HubOptions> {
+    let ui = match &args.ui {
+        Some(dir) => {
+            let files = UiFiles::load_dir(dir)
+                .with_context(|| format!("could not read the UI from {}", dir.display()))?;
+            Some(Arc::new(files) as Arc<dyn vesta_hub::UiAssets>)
+        }
+        None => None,
+    };
+    Ok(HubOptions {
+        // Only `--dev` turns sign-in off.
+        auth: if args.dev {
+            ApiAuth::Disabled
+        } else {
+            ApiAuth::Sessions
+        },
+        allowed_origins: args.allow_origin.clone(),
+        ui,
+        ..HubOptions::default()
+    })
 }
 
 async fn shutdown_signal() {
@@ -130,14 +168,23 @@ async fn main() -> anyhow::Result<()> {
     }
     let addr = SocketAddr::new(config.hub.bind_address, config.hub.port);
 
-    let hub = Hub::start(
-        &config,
-        dashboard,
-        &Registry::builtin(),
-        HubOptions::default(),
-    )
-    .await?;
+    let hub = Hub::start(&config, dashboard, &Registry::builtin(), options(&args)?).await?;
     let listener = bind_loopback(addr).await?;
+    if let Some(codes) = hub.login_codes() {
+        let local = listener.local_addr()?;
+        let path = codes.issue()?.login_path();
+        tracing::info!(
+            "to open the panel in a browser on this machine, go to http://{local}{path} \
+             (works once, within {} s; restart the hub for a new one)",
+            LOGIN_CODE_TTL.as_secs()
+        );
+        if args.ui.is_none() {
+            tracing::info!(
+                "no --ui: with the Vite dev UI, start the hub with \
+                 --allow-origin http://localhost:5173 and open the same path there"
+            );
+        }
+    }
     hub.serve(listener, shutdown_signal()).await
 }
 
@@ -161,6 +208,38 @@ mod tests {
         assert!(Args::try_parse_from(["vesta-hubd"]).is_err());
         assert!(Args::try_parse_from(["vesta-hubd", "--config", "c.json"]).is_err());
         assert!(Args::try_parse_from(["vesta-hubd", "--dev", "--config", "c.json"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "vesta-hubd",
+                "--dev",
+                "--allow-origin",
+                "http://localhost:1"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sign_in_is_off_only_with_dev() {
+        let dev = Args::try_parse_from(["vesta-hubd", "--dev"]).unwrap();
+        assert_eq!(options(&dev).unwrap().auth, ApiAuth::Disabled);
+        let real = Args::try_parse_from([
+            "vesta-hubd",
+            "--config",
+            "c.json",
+            "--dashboard",
+            "d.json",
+            "--allow-origin",
+            "http://localhost:5173",
+        ])
+        .unwrap();
+        let options = options(&real).unwrap();
+        assert_eq!(options.auth, ApiAuth::Sessions);
+        assert_eq!(options.allowed_origins, ["http://localhost:5173"]);
+        assert!(options.ui.is_none());
+
+        let missing_ui = Args::try_parse_from(["vesta-hubd", "--dev", "--ui", "/nonexistent"]);
+        assert!(super::options(&missing_ui.unwrap()).is_err());
     }
 
     #[test]
