@@ -6,13 +6,18 @@
 //!
 //! | Route | Response |
 //! |---|---|
-//! | `GET /api/v1/health` | `{ "status": "ok" }` (liveness) |
+//! | `GET /api/v1/health` | `{ "status": "ok" }` (liveness, no session needed) |
+//! | `GET /api/v1/session?code=…` | Redeems a one-time login code: session cookie + `303 → /` |
 //! | `GET /api/v1/devices` | `Snapshot`: `{ "devices": [...] }` |
 //! | `GET /api/v1/dashboard` | `Dashboard` |
 //! | `GET /api/v1/ws` | WebSocket: `ServerMessage` / `ClientMessage` |
 //!
 //! The API is brand-free and never exposes driver keys or driver config:
 //! devices are described only by their endpoints and capabilities.
+//!
+//! Every other `/api/v1/*` route needs a session (see [`ApiAuth`] and
+//! `docs/architecture/local-session.md`). With [`HubOptions::ui`] set, the
+//! same origin also serves the wall-panel UI.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -28,8 +33,17 @@ use vesta_core::{Dashboard, EventBus, HubConfig, Target};
 pub use vesta_drivers::Registry;
 
 mod api;
+mod assets;
+mod auth;
+mod http;
 mod runtime;
 mod ws;
+
+pub use assets::{UiAsset, UiAssets, UiFiles, mime_for};
+pub use auth::{
+    ApiAuth, Identity, IdentityKind, LOGIN_CODE_TTL, LOGIN_PATH, LoginCode, LoginCodes, Role,
+    SESSION_COOKIE,
+};
 
 use runtime::Runtime;
 
@@ -42,6 +56,15 @@ pub struct HubOptions {
     /// Updates buffered per WebSocket session before it must resync with a
     /// fresh snapshot.
     pub bus_capacity: usize,
+    /// Who may use the API. Sessions unless explicitly disabled.
+    pub auth: ApiAuth,
+    /// Page origins besides the Hub's own (`http://127.0.0.1:<port>`,
+    /// `http://localhost:<port>`) whose requests may use a session, given
+    /// exactly, e.g. `http://localhost:1420` for a dev server that proxies
+    /// the API. Must be on this machine.
+    pub allowed_origins: Vec<String>,
+    /// The wall-panel UI, served on the API's origin.
+    pub ui: Option<Arc<dyn UiAssets>>,
 }
 
 impl HubOptions {
@@ -53,6 +76,9 @@ impl Default for HubOptions {
         Self {
             command_timeout: Self::DEFAULT_COMMAND_TIMEOUT,
             bus_capacity: EventBus::DEFAULT_CAPACITY,
+            auth: ApiAuth::default(),
+            allowed_origins: Vec::new(),
+            ui: None,
         }
     }
 }
@@ -62,6 +88,8 @@ impl Default for HubOptions {
 pub struct Hub {
     runtime: Arc<Runtime>,
     dashboard: Arc<Dashboard>,
+    auth: auth::Auth,
+    ui: Option<assets::UiService>,
     shutdown: watch::Sender<bool>,
     tasks: JoinSet<()>,
 }
@@ -77,6 +105,14 @@ impl Hub {
     ) -> anyhow::Result<Self> {
         config.validate().context("invalid hub config")?;
         dashboard.validate().context("invalid dashboard")?;
+        let auth = auth::Auth::new(options.auth, &options.allowed_origins)?;
+        if options.auth == ApiAuth::Disabled {
+            tracing::warn!(
+                "API authentication is disabled (development only): \
+                 any program on this machine can control the home"
+            );
+        }
+        let ui = options.ui.clone().map(assets::UiService::new).transpose()?;
         let mut tasks = JoinSet::new();
         let runtime = Runtime::start(config, registry, &options, &mut tasks);
         for target in dashboard_targets(&dashboard) {
@@ -88,18 +124,33 @@ impl Hub {
         Ok(Self {
             runtime,
             dashboard: Arc::new(dashboard),
+            auth,
+            ui,
             shutdown,
             tasks,
         })
     }
 
-    /// The API routes, for embedding or testing without a socket.
+    /// Issues one-time login codes for the panel; `None` when
+    /// authentication is disabled.
+    pub fn login_codes(&self) -> Option<LoginCodes> {
+        self.auth.login_codes()
+    }
+
+    /// The routes, for embedding or testing without a socket. Without a
+    /// bound address only [`HubOptions::allowed_origins`] may use a
+    /// session; [`Hub::serve`] also allows the Hub's own origin.
     pub fn router(&self) -> Router {
-        api::router(api::AppState {
+        self.app(None)
+    }
+
+    fn app(&self, local: Option<SocketAddr>) -> Router {
+        let api = api::router(api::AppState {
             runtime: Arc::clone(&self.runtime),
             dashboard: Arc::clone(&self.dashboard),
             shutdown: self.shutdown.subscribe(),
-        })
+        });
+        http::app(api, self.auth.policy(local), self.ui.clone())
     }
 
     /// Serves the API on `listener` until `shutdown` resolves, then closes
@@ -113,7 +164,7 @@ impl Hub {
             .local_addr()
             .context("listener has no local address")?;
         ensure_loopback(local)?;
-        let router = self.router();
+        let router = self.app(Some(local));
         let notify = self.shutdown.clone();
         tracing::info!("listening on http://{local}");
         axum::serve(listener, router)

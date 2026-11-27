@@ -589,3 +589,16 @@ async fn run_stops_when_the_hub_stops_listening() {
         Err(DriverError::SinkClosed)
     ));
 }
+
+#[test]
+fn demo_home_is_valid_and_only_uses_the_simulator() {
+    let config = vesta_core::HubConfig::from_json(demo::CONFIG).unwrap();
+    assert!(config.hub.bind_address.is_loopback());
+    assert!(!config.devices.is_empty());
+    for device in &config.devices {
+        assert_eq!(device.driver, "sim", "{}", device.id);
+        SimDriver::from_config(&device.config).unwrap();
+    }
+    let dashboard = vesta_core::Dashboard::from_json(demo::DASHBOARD).unwrap();
+    assert!(!dashboard.pages.is_empty());
+}

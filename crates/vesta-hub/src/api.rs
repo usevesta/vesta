@@ -59,7 +59,7 @@ async fn dashboard(State(state): State<AppState>) -> Json<Dashboard> {
 /// local (DNS rebinding) and requests sent by pages from other origins
 /// (WebSockets are not covered by CORS). Requests without `Origin`
 /// (non-browser clients) are allowed.
-async fn local_only(request: Request, next: Next) -> Response {
+pub(crate) async fn local_only(request: Request, next: Next) -> Response {
     let headers = request.headers();
     let host_ok = headers
         .get(HOST)
@@ -77,7 +77,7 @@ async fn local_only(request: Request, next: Next) -> Response {
 }
 
 /// The host part of an `authority` (`host[:port]`, `[v6][:port]`).
-fn host_of(authority: &str) -> &str {
+pub(crate) fn host_of(authority: &str) -> &str {
     if let Some(rest) = authority.strip_prefix('[') {
         return rest.split_once(']').map_or("", |(host, _)| host);
     }
@@ -87,7 +87,7 @@ fn host_of(authority: &str) -> &str {
     }
 }
 
-fn is_local_host(host: &str) -> bool {
+pub(crate) fn is_local_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }

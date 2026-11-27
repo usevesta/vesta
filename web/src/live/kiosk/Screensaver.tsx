@@ -26,8 +26,10 @@ function ScreensaverClock() {
 }
 
 /**
- * Dim full-screen overlay while nobody uses the panel. The tap that wakes
- * it is swallowed here, so it never switches anything underneath.
+ * Dim full-screen overlay while nobody uses the panel. Where the device can
+ * dim its backlight it does so as well (`startScreenControl`); the overlay
+ * stays either way, so the tap that wakes it is swallowed here and never
+ * switches anything underneath.
  */
 export function Screensaver() {
   const { t } = useTranslation()

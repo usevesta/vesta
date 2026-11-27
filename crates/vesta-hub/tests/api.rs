@@ -27,7 +27,7 @@ use vesta_core::{
     HubConfig, OnOffCapability, OnOffState, RejectReason, ServerMessage, Snapshot, StateChange,
     Target, async_trait,
 };
-use vesta_hub::{Hub, HubOptions, Registry, bind_loopback};
+use vesta_hub::{ApiAuth, Hub, HubOptions, Registry, bind_loopback};
 
 const HOME: &str = r#"{
   "schema_version": 1,
@@ -71,7 +71,12 @@ fn target(raw: &str) -> Target {
     raw.parse().unwrap()
 }
 
+/// These tests cover the device API; sign-in is covered in `session.rs`.
 async fn hub(config: &str, registry: Registry, options: HubOptions) -> Hub {
+    let options = HubOptions {
+        auth: ApiAuth::Disabled,
+        ..options
+    };
     Hub::start(
         &HubConfig::from_json(config).unwrap(),
         Dashboard::from_json(DASHBOARD).unwrap(),
