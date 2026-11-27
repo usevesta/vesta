@@ -8,7 +8,8 @@
 //! |---|---|
 //! | `GET /api/v1/health` | `{ "status": "ok" }` (liveness) |
 //! | `GET /api/v1/devices` | `Snapshot`: `{ "devices": [...] }` |
-//! | `GET /api/v1/dashboard` | `Dashboard` |
+//! | `GET /api/v1/dashboard` | `Dashboard`, with an `ETag` |
+//! | `PUT /api/v1/dashboard` | Saves a `Dashboard` (`If-Match` required; see `dashboard.rs`) |
 //! | `GET /api/v1/ws` | WebSocket: `ServerMessage` / `ClientMessage` |
 //!
 //! The API is brand-free and never exposes driver keys or driver config:
@@ -24,13 +25,16 @@ use axum::Router;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use vesta_core::{Dashboard, EventBus, HubConfig, Target};
+use vesta_core::{Dashboard, EventBus, HubConfig};
 pub use vesta_drivers::Registry;
 
 mod api;
+mod dashboard;
 mod runtime;
 mod ws;
 
+use dashboard::Dashboards;
+pub use dashboard::{DashboardStore, JsonFileStore, MemoryStore};
 use runtime::Runtime;
 
 /// Tunables. `Default` matches the documented behaviour.
@@ -61,14 +65,15 @@ impl Default for HubOptions {
 /// API is served by [`Hub::serve`].
 pub struct Hub {
     runtime: Arc<Runtime>,
-    dashboard: Arc<Dashboard>,
+    dashboards: Arc<Dashboards>,
     shutdown: watch::Sender<bool>,
     tasks: JoinSet<()>,
 }
 
 impl Hub {
     /// Validates both documents, builds every configured device through
-    /// `registry` and starts the device loops.
+    /// `registry` and starts the device loops. Dashboard edits are kept in
+    /// memory until [`Hub::with_dashboard_store`] says where to save them.
     pub async fn start(
         config: &HubConfig,
         dashboard: Dashboard,
@@ -79,25 +84,31 @@ impl Hub {
         dashboard.validate().context("invalid dashboard")?;
         let mut tasks = JoinSet::new();
         let runtime = Runtime::start(config, registry, &options, &mut tasks);
-        for target in dashboard_targets(&dashboard) {
-            if !runtime.has_target(target) {
-                tracing::warn!(endpoint = %target, "dashboard refers to an endpoint that does not exist");
-            }
-        }
+        dashboard::warn_unknown_targets(&dashboard, &runtime);
+        let dashboards = Arc::new(Dashboards::new(dashboard)?);
         let (shutdown, _) = watch::channel(false);
         Ok(Self {
             runtime,
-            dashboard: Arc::new(dashboard),
+            dashboards,
             shutdown,
             tasks,
         })
+    }
+
+    /// Saves dashboard edits to `store` (e.g. a [`JsonFileStore`] for the
+    /// file the dashboard was loaded from). Applies to routers created
+    /// before and after this call.
+    #[must_use]
+    pub fn with_dashboard_store(self, store: impl DashboardStore) -> Self {
+        self.dashboards.set_store(Arc::new(store));
+        self
     }
 
     /// The API routes, for embedding or testing without a socket.
     pub fn router(&self) -> Router {
         api::router(api::AppState {
             runtime: Arc::clone(&self.runtime),
-            dashboard: Arc::clone(&self.dashboard),
+            dashboards: Arc::clone(&self.dashboards),
             shutdown: self.shutdown.subscribe(),
         })
     }
@@ -148,24 +159,6 @@ fn ensure_loopback(addr: SocketAddr) -> anyhow::Result<()> {
              (127.0.0.1 or ::1); other devices will connect through the paired, encrypted link"
         )
     }
-}
-
-fn dashboard_targets(dashboard: &Dashboard) -> impl Iterator<Item = &Target> {
-    let widgets = dashboard
-        .pages
-        .iter()
-        .flat_map(|page| page.widgets.iter().filter_map(|w| w.target.as_ref()));
-    let wake = dashboard.kiosk.wake_on.iter().map(|event| &event.target);
-    let overlay = dashboard.doorbell_overlay.iter().flat_map(|overlay| {
-        [
-            Some(&overlay.doorbell_target),
-            overlay.camera_target.as_ref(),
-            overlay.open_target.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-    });
-    widgets.chain(wake).chain(overlay)
 }
 
 #[cfg(test)]
