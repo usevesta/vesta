@@ -1,0 +1,28 @@
+# Rust & Tauri
+target/
+# Cargo.lock is committed on purpose (this is an application).
+gen/schemas/
+# Downloaded sidecar binaries (go2rtc)
+apps/tauri/binaries/
+
+# Frontend
+web/node_modules/
+web/dist/
+.pnpm-store/
+
+# Real configs and secrets (NEVER commit)
+config.json
+dashboard.json
+.vesta/
+*.p8
+*.p12
+*.mobileprovision
+*.keystore
+*.jks
+keystore.properties
+local.properties
+.env
+.env.*
+
+# macOS
+.DS_Store
