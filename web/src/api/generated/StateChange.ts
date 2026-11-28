@@ -13,6 +13,7 @@ import type { LockState } from "./LockState";
 import type { OccupancyState } from "./OccupancyState";
 import type { OnOffState } from "./OnOffState";
 import type { PowerMeterState } from "./PowerMeterState";
+import type { RobotVacuumState } from "./RobotVacuumState";
 import type { Target } from "./Target";
 import type { TemperatureState } from "./TemperatureState";
 
@@ -20,4 +21,4 @@ import type { TemperatureState } from "./TemperatureState";
  * New full state of one capability of one endpoint:
  * `{ "target": "living_room_fan/light", "capability": "level", "state": { "level": 80 } }`.
  */
-export type StateChange = { target: Target, } & ({ "capability": "on_off", "state": OnOffState } | { "capability": "level", "state": LevelState } | { "capability": "color_temperature", "state": ColorTemperatureState } | { "capability": "color", "state": ColorState } | { "capability": "cover", "state": CoverState } | { "capability": "fan", "state": FanState } | { "capability": "lock", "state": LockState } | { "capability": "camera", "state": CameraState } | { "capability": "occupancy", "state": OccupancyState } | { "capability": "contact", "state": ContactState } | { "capability": "temperature", "state": TemperatureState } | { "capability": "humidity", "state": HumidityState } | { "capability": "power_meter", "state": PowerMeterState } | { "capability": "ev_charger", "state": EvChargerState } | { "capability": "battery", "state": BatteryState });
+export type StateChange = { target: Target, } & ({ "capability": "on_off", "state": OnOffState } | { "capability": "level", "state": LevelState } | { "capability": "color_temperature", "state": ColorTemperatureState } | { "capability": "color", "state": ColorState } | { "capability": "cover", "state": CoverState } | { "capability": "fan", "state": FanState } | { "capability": "lock", "state": LockState } | { "capability": "camera", "state": CameraState } | { "capability": "occupancy", "state": OccupancyState } | { "capability": "contact", "state": ContactState } | { "capability": "temperature", "state": TemperatureState } | { "capability": "humidity", "state": HumidityState } | { "capability": "power_meter", "state": PowerMeterState } | { "capability": "ev_charger", "state": EvChargerState } | { "capability": "battery", "state": BatteryState } | { "capability": "robot_vacuum", "state": RobotVacuumState });

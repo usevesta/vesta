@@ -35,9 +35,10 @@ WebSocket) to the hub. If the hub runs on another port (`--port 9000`), start th
 `VESTA_HUB_ORIGIN=http://127.0.0.1:9000 pnpm dev`.
 
 The simulated home has lights, a ceiling fan with a light, a blind, a garage door, a door strike,
-a doorbell that rings every 3 minutes (to see the doorbell screen) and a car charger with solar
-panels on a compressed day (12 minutes for 24 hours) whose own power control keeps the home under
-its contracted power (the **Energy** page).
+a doorbell that rings every 3 minutes (to see the doorbell screen), two plugs that measure what
+they draw (one of them only watched, so it has no switch), a robot vacuum (the **Plugs & Robot**
+page) and a car charger with solar panels on a compressed day (12 minutes for 24 hours) whose own
+power control keeps the home under its contracted power (the **Energy** page).
 
 Tap **Edit** on the screen to add, move, resize, rename or remove tiles and to manage pages. With
 `--dev`, changes live in memory only (restarting the hub resets the simulated home); with
@@ -130,9 +131,22 @@ Each kind of device has its own driver crate in `crates/drivers/`, enabled by a 
 |---|---|---|
 | `sim` | the simulated home | `vesta-hubd --dev`, demos and tests |
 | `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
+| `tuya` | Tuya / Smart Life plugs, switches and robot vacuums (local protocol 3.3, 3.4, 3.5) | found on the network by their own broadcasts; each needs its local key. See [`crates/drivers/vesta-driver-tuya/README.md`](crates/drivers/vesta-driver-tuya/README.md) |
 
-`config.example.json` shows one of each (with placeholder addresses). Real `config.json` files
-stay out of git.
+`config.example.json` shows one of each (with placeholder addresses and keys). Real `config.json`
+files stay out of git.
+
+Tuya devices are added with the hub itself, from the device list tinytuya's wizard writes (so
+nobody edits JSON by hand):
+
+```sh
+cargo run -p vesta-hubd -- tuya-import devices.json --out config.json            # add or update them
+cargo run -p vesta-hubd -- tuya-import devices.json --out config.json --read-only # watch only: never sends a command
+```
+
+It listens for the devices' broadcasts for a few seconds to learn their address and protocol, and
+writes `config.json` readable by its owner only: **it holds each device's local key**, which
+controls the device. Keep it out of git, chats and screenshots.
 
 ## Checks
 

@@ -38,6 +38,7 @@ describe('icon registry', () => {
       'garage_door',
       'gate',
       'meter',
+      'robot_vacuum',
     ]
     for (const name of required) {
       expect(isIconName(name), name).toBe(true)

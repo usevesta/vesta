@@ -13,6 +13,8 @@ default = ["sim"]
 sim = ["dep:vesta-driver-sim"]
 # V2C Trydan EV chargers (local HTTP API).
 v2c = ["dep:vesta-driver-v2c"]
+# Tuya devices over the local network (protocol 3.3, 3.4, 3.5).
+tuya = ["dep:vesta-driver-tuya"]
 
 [dependencies]
 serde_json.workspace = true
@@ -20,6 +22,7 @@ thiserror.workspace = true
 vesta-core.workspace = true
 vesta-driver-sim = { workspace = true, optional = true }
 vesta-driver-v2c = { workspace = true, optional = true }
+vesta-driver-tuya = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

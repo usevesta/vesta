@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | `sim` | `sim` (default) | `vesta-driver-sim` |
 //! | `v2c` | `v2c` | `vesta-driver-v2c` (V2C Trydan EV chargers) |
+//! | `tuya` | `tuya` | `vesta-driver-tuya` (Tuya devices, local protocol 3.3–3.5) |
 //!
 //! The Hub asks a [`Registry`] to build one driver per configured device and
 //! never learns which crate it came from.
@@ -21,6 +22,14 @@ use vesta_core::{DeviceConfig, DeviceDriver, DeviceId, DriverError};
 /// `vesta-hubd --dev` and for the app before a home is set up.
 #[cfg(feature = "sim")]
 pub use vesta_driver_sim::demo;
+
+/// Bringing Tuya devices in from tinytuya's device list
+/// (`vesta-hubd tuya-import`), and reading one device's status.
+#[cfg(feature = "tuya")]
+pub mod tuya {
+    pub use vesta_driver_tuya::import::*;
+    pub use vesta_driver_tuya::{Discovery, Status, TuyaConfig, Version, read_status};
+}
 
 /// Builds a driver from a device's driver-specific `config` object.
 pub type DriverFactory =
@@ -66,6 +75,13 @@ impl Registry {
         registry.register("v2c", |config| {
             Ok(Arc::new(vesta_driver_v2c::V2cDriver::from_config(config)?)
                 as Arc<dyn DeviceDriver>)
+        });
+        #[cfg(feature = "tuya")]
+        registry.register(vesta_driver_tuya::import::DRIVER, |config| {
+            Ok(
+                Arc::new(vesta_driver_tuya::TuyaDriver::from_config(config)?)
+                    as Arc<dyn DeviceDriver>,
+            )
         });
         registry
     }
@@ -195,6 +211,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[cfg(feature = "tuya")]
+    #[test]
+    fn builds_a_tuya_device() {
+        let registry = Registry::builtin();
+        assert!(registry.contains("tuya"));
+        let driver = registry
+            .build(&device(
+                "tuya",
+                json!({
+                    "device_id": "bf00000000000000000000",
+                    "local_key": "0123456789abcdef",
+                    "protocol_version": "3.5",
+                    "category": "cz",
+                    "mapping": { "1": { "code": "switch_1", "type": "Boolean" } },
+                    "read_only": true
+                }),
+            ))
+            .unwrap();
+        let endpoints = driver.describe().endpoints;
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].endpoint_type, vesta_core::EndpointType::Outlet);
+        let Err(BuildError::Driver {
+            source: DriverError::InvalidConfig(message),
+            ..
+        }) = registry.build(&device(
+            "tuya",
+            json!({ "device_id": "bf00000000000000000000", "local_key": "short",
+                    "protocol_version": "3.5", "category": "cz" }),
+        ))
+        else {
+            panic!("a bad key must be refused");
+        };
+        assert!(!message.contains("short"), "{message}");
     }
 
     #[cfg(feature = "sim")]

@@ -16,6 +16,15 @@ import {
   type DemoThing,
 } from '@/demo/demo-home'
 import {
+  commandDemoRobot,
+  DEMO_VOLTS,
+  plugCurrentA,
+  startDemoAppliances,
+  switchDemoPlug,
+  useDemoAppliances,
+  type DemoAppliances,
+} from '@/demo/demo-appliances'
+import {
   changeDemoCharger,
   DEMO_CHARGER_MODES,
   DEMO_CURRENT_RANGE,
@@ -35,6 +44,7 @@ function demoSpec(
   label: string,
   demo: DemoState,
   charger: DemoCharger,
+  appliances: DemoAppliances,
   rows: number,
   run: (name: string, command: Promise<boolean>) => void,
   onDoorOpened: (name: string) => void,
@@ -180,6 +190,50 @@ function demoSpec(
           },
         },
       }
+    case 'plug': {
+      const plug = appliances.plugs[thing.id]
+      return {
+        type: 'outlet-control',
+        props: {
+          label,
+          on: plug.on,
+          pending: plug.pending,
+          powerW: plug.powerW,
+          energyWh: plug.energyWh,
+          voltageV: DEMO_VOLTS,
+          currentA: plugCurrentA(plug),
+          onToggle: plug.watchOnly
+            ? undefined
+            : (on) => {
+                run(label, switchDemoPlug(thing.id, on))
+              },
+        },
+      }
+    }
+    case 'robot': {
+      const { robot } = appliances
+      return {
+        type: 'robot-vacuum',
+        props: {
+          label,
+          pending: robot.pending,
+          status: robot.status,
+          batteryPercent: robot.batteryPercent,
+          batteryLow: robot.batteryPercent <= 20,
+          cleanedAreaM2: robot.cleanedAreaM2,
+          cleaningDurationS: robot.cleaningDurationS,
+          onStart: () => {
+            run(label, commandDemoRobot('start'))
+          },
+          onPause: () => {
+            run(label, commandDemoRobot('pause'))
+          },
+          onReturnToDock: () => {
+            run(label, commandDemoRobot('dock'))
+          },
+        },
+      }
+    }
   }
 }
 
@@ -188,6 +242,7 @@ function DemoWidget({ widget }: { widget: Widget }) {
   const { t } = useTranslation()
   const demo = useDemoStore()
   const charger = useDemoCharger()
+  const appliances = useDemoAppliances()
 
   if (!isWidgetType(widget.type)) {
     const unknown: AnyWidgetSpec = { type: widget.type, props: widget.props }
@@ -205,6 +260,7 @@ function DemoWidget({ widget }: { widget: Widget }) {
     label,
     demo,
     charger,
+    appliances,
     widget.row_span,
     (name, command) => {
       void command.then((ok) => {
@@ -229,8 +285,9 @@ export function DemoApp() {
   const revision = useDemoDashboardStore((s) => s.revision)
   const items = useMemo(() => demoItems(t), [t])
 
-  // The sample charger runs while the demo is on screen.
+  // The sample charger, plugs and robot run while the demo is on screen.
   useEffect(() => startDemoCharger(), [])
+  useEffect(() => startDemoAppliances(), [])
 
   useEffect(() => {
     // Built once, in the language the screen starts in (like a real home).

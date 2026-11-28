@@ -13,10 +13,11 @@ import type { LockState } from "./LockState";
 import type { OccupancyState } from "./OccupancyState";
 import type { OnOffState } from "./OnOffState";
 import type { PowerMeterState } from "./PowerMeterState";
+import type { RobotVacuumState } from "./RobotVacuumState";
 import type { TemperatureState } from "./TemperatureState";
 
 /**
  * The full state of one capability, as published by a driver and sent in
  * `state` messages: `{ "capability": "level", "state": { "level": 80 } }`.
  */
-export type CapabilityState = { "capability": "on_off", "state": OnOffState } | { "capability": "level", "state": LevelState } | { "capability": "color_temperature", "state": ColorTemperatureState } | { "capability": "color", "state": ColorState } | { "capability": "cover", "state": CoverState } | { "capability": "fan", "state": FanState } | { "capability": "lock", "state": LockState } | { "capability": "camera", "state": CameraState } | { "capability": "occupancy", "state": OccupancyState } | { "capability": "contact", "state": ContactState } | { "capability": "temperature", "state": TemperatureState } | { "capability": "humidity", "state": HumidityState } | { "capability": "power_meter", "state": PowerMeterState } | { "capability": "ev_charger", "state": EvChargerState } | { "capability": "battery", "state": BatteryState };
+export type CapabilityState = { "capability": "on_off", "state": OnOffState } | { "capability": "level", "state": LevelState } | { "capability": "color_temperature", "state": ColorTemperatureState } | { "capability": "color", "state": ColorState } | { "capability": "cover", "state": CoverState } | { "capability": "fan", "state": FanState } | { "capability": "lock", "state": LockState } | { "capability": "camera", "state": CameraState } | { "capability": "occupancy", "state": OccupancyState } | { "capability": "contact", "state": ContactState } | { "capability": "temperature", "state": TemperatureState } | { "capability": "humidity", "state": HumidityState } | { "capability": "power_meter", "state": PowerMeterState } | { "capability": "ev_charger", "state": EvChargerState } | { "capability": "battery", "state": BatteryState } | { "capability": "robot_vacuum", "state": RobotVacuumState };

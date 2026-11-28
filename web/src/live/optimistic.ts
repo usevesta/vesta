@@ -12,6 +12,7 @@ import type {
   CoverState,
   Endpoint,
   EvChargerState,
+  RobotVacuumState,
 } from '@/api/generated'
 
 /** Capabilities that have a state (everything except `trigger` and `doorbell`). */
@@ -71,6 +72,24 @@ function evChargerPrediction(command: Extract<Command, { capability: 'ev_charger
   }
 }
 
+/**
+ * What a robot command visibly changes. `start` predicts nothing: the
+ * robot may first leave its dock, find its way or refuse (e.g. a low
+ * battery), and says so itself.
+ */
+function robotVacuumPrediction(
+  command: Extract<Command, { capability: 'robot_vacuum' }>,
+): Partial<RobotVacuumState> {
+  switch (command.action) {
+    case 'start':
+      return {}
+    case 'pause':
+      return { status: 'paused' }
+    case 'return_to_dock':
+      return { status: 'returning' }
+  }
+}
+
 /** What `command` will do to `endpoint` (as currently shown), per the capability model. */
 export function predict(command: Command, endpoint: Endpoint | undefined): Prediction {
   const capabilities = endpoint?.capabilities
@@ -113,6 +132,13 @@ export function predict(command: Command, endpoint: Endpoint | undefined): Predi
       return {
         predicted: Object.keys(partial).length === 0 ? {} : { ev_charger: partial },
         confirmsWith: 'ev_charger',
+      }
+    }
+    case 'robot_vacuum': {
+      const partial = robotVacuumPrediction(command)
+      return {
+        predicted: Object.keys(partial).length === 0 ? {} : { robot_vacuum: partial },
+        confirmsWith: 'robot_vacuum',
       }
     }
   }

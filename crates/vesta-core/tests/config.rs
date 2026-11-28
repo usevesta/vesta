@@ -190,15 +190,15 @@ fn dashboard_example_parses_and_round_trips() {
     assert_eq!(home.grid_columns, 4);
     assert!(home.widgets[0].target.is_none());
     assert_eq!(home.widgets[0].widget_type, "clock-weather");
-    let fan = home
+    let robot = home
         .widgets
         .iter()
-        .find(|w| w.widget_type == "fan-control")
+        .find(|w| w.widget_type == "robot-vacuum")
         .unwrap();
-    assert!(fan.props.is_empty());
+    assert!(robot.props.is_empty());
     assert_eq!(
-        fan.target.as_ref().map(ToString::to_string).as_deref(),
-        Some("living_room_fan/fan")
+        robot.target.as_ref().map(ToString::to_string).as_deref(),
+        Some("robot_vacuum/main")
     );
 
     let original: Value = serde_json::from_str(DASHBOARD_EXAMPLE).unwrap();
@@ -343,9 +343,8 @@ fn dashboard_lists_every_target_it_uses() {
         [
             "front_door_strike/main",
             "front_doorbell/main",
-            "living_room_light/main",
-            "living_room_fan/fan",
-            "living_room_fan/light",
+            "hall_lamp/main",
+            "robot_vacuum/main",
             "front_doorbell/main",
             "front_doorbell/main",
             "front_doorbell/main",

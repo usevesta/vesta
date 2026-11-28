@@ -18,8 +18,11 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt", "std"] }
 vesta-core.workspace = true
-vesta-drivers = { workspace = true, features = ["sim", "v2c"] }
+vesta-drivers = { workspace = true, features = ["sim", "tuya", "v2c"] }
 vesta-hub.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

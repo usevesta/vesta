@@ -4,6 +4,7 @@
 //! ```sh
 //! cargo run -p vesta-hubd -- --dev                      # simulated home, no sign-in, edits in memory
 //! vesta-hubd --config config.json --dashboard dashboard.json --ui web/dist
+//! vesta-hubd tuya-import devices.json --out config.json # add Tuya devices (writes their keys!)
 //! ```
 //!
 //! Listens on loopback only (`127.0.0.1:8080` by default). Logs go to
@@ -13,12 +14,14 @@
 //! one-time sign-in URL (single use, valid for 60 s) to open in a browser
 //! on this machine. `--dev` turns sign-in off (development only).
 
+mod tuya_import;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
@@ -30,8 +33,17 @@ const DEV_CONFIG: &str = vesta_drivers::demo::CONFIG;
 const DEV_DASHBOARD: &str = vesta_drivers::demo::DASHBOARD;
 
 #[derive(Debug, Parser)]
-#[command(name = "vesta-hubd", version, about = "Headless VESTA hub")]
+#[command(
+    name = "vesta-hubd",
+    version,
+    about = "Headless VESTA hub",
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
+)]
 struct Args {
+    #[command(subcommand)]
+    tool: Option<Tool>,
+
     /// Hub config (`config.json`).
     #[arg(
         long,
@@ -69,6 +81,15 @@ struct Args {
     /// `http://localhost:5173` for the Vite dev UI. Repeatable.
     #[arg(long, value_name = "ORIGIN", conflicts_with = "dev")]
     allow_origin: Vec<String>,
+}
+
+/// One-off tools; without one, the hub runs.
+#[derive(Debug, Subcommand)]
+enum Tool {
+    /// Add Tuya devices from tinytuya's device list (`devices.json`) to a
+    /// hub config. The config then holds each device's local key, which
+    /// controls the device: keep it out of git, chats and screenshots.
+    TuyaImport(tuya_import::TuyaImport),
 }
 
 fn read(path: &Path) -> anyhow::Result<String> {
@@ -159,6 +180,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+    if let Some(Tool::TuyaImport(import)) = &args.tool {
+        return tuya_import::run(import).await;
+    }
 
     let (mut config, dashboard) = load(&args)?;
     if let Some(port) = args.port {
@@ -222,6 +246,41 @@ mod tests {
             ])
             .is_err()
         );
+
+        let import = Args::try_parse_from([
+            "vesta-hubd",
+            "tuya-import",
+            "devices.json",
+            "--out",
+            "config.json",
+            "--only",
+            "Hall plug",
+            "--only",
+            "Robot",
+            "--read-only",
+            "--listen",
+            "0",
+            "--check",
+        ])
+        .unwrap();
+        let Some(Tool::TuyaImport(import)) = import.tool else {
+            panic!("expected tuya-import");
+        };
+        assert_eq!(import.only, ["Hall plug", "Robot"]);
+        assert!(import.read_only && import.check);
+        assert_eq!(import.listen, 0);
+        assert!(Args::try_parse_from(["vesta-hubd", "tuya-import", "devices.json"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "vesta-hubd",
+                "--dev",
+                "tuya-import",
+                "devices.json",
+                "--out",
+                "c.json"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -280,7 +339,7 @@ mod tests {
             assert!(targets.contains(target), "{target} is not in the dev home");
         }
 
-        assert_eq!(dashboard.pages.len(), 3);
+        assert_eq!(dashboard.pages.len(), 4);
         assert_eq!(
             widget_types,
             BTreeSet::from([
@@ -291,6 +350,8 @@ mod tests {
                 "ev-charger",
                 "fan-control",
                 "light-control",
+                "outlet-control",
+                "robot-vacuum",
             ])
         );
         assert!(

@@ -27,6 +27,7 @@ pub enum Command {
     Lock(LockCommand),
     Trigger(TriggerCommand),
     EvCharger(EvChargerCommand),
+    RobotVacuum(RobotVacuumCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -129,6 +130,18 @@ pub enum EvChargerCommand {
     },
 }
 
+/// Robot vacuum commands. Each needs its feature (`features.start`,
+/// `features.pause`, `features.return_to_dock`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RobotVacuumCommand {
+    /// Starts cleaning, or carries on after a pause.
+    Start,
+    Pause,
+    /// Sends the robot back to its dock to charge.
+    ReturnToDock,
+}
+
 impl Command {
     /// The capability this command belongs to.
     pub const fn capability(&self) -> CapabilityKind {
@@ -142,6 +155,7 @@ impl Command {
             Self::Lock(_) => CapabilityKind::Lock,
             Self::Trigger(_) => CapabilityKind::Trigger,
             Self::EvCharger(_) => CapabilityKind::EvCharger,
+            Self::RobotVacuum(_) => CapabilityKind::RobotVacuum,
         }
     }
 
@@ -175,7 +189,8 @@ impl Command {
             | Self::Level(_)
             | Self::ColorTemperature(_)
             | Self::Color(_)
-            | Self::Fan(_) => false,
+            | Self::Fan(_)
+            | Self::RobotVacuum(_) => false,
         }
     }
 }
@@ -320,7 +335,7 @@ impl From<DriverError> for CommandError {
 mod tests {
     use super::*;
 
-    const ALL_TYPES: [EndpointType; 14] = [
+    const ALL_TYPES: [EndpointType; 15] = [
         EndpointType::Light,
         EndpointType::Outlet,
         EndpointType::Switch,
@@ -335,6 +350,7 @@ mod tests {
         EndpointType::Sensor,
         EndpointType::Meter,
         EndpointType::EvCharger,
+        EndpointType::RobotVacuum,
     ];
 
     fn access_types() -> Vec<EndpointType> {
@@ -403,6 +419,9 @@ mod tests {
             }),
             Command::EvCharger(EvChargerCommand::Lock),
             Command::EvCharger(EvChargerCommand::SetSchedule { enabled: false }),
+            Command::RobotVacuum(RobotVacuumCommand::Start),
+            Command::RobotVacuum(RobotVacuumCommand::Pause),
+            Command::RobotVacuum(RobotVacuumCommand::ReturnToDock),
         ];
         for ty in ALL_TYPES {
             for cmd in &commands {

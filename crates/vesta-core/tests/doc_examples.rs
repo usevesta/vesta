@@ -11,7 +11,7 @@ use serde_json::Value;
 use vesta_core::{
     CapabilityState, ClientMessage, Command, CommandError, Device, DeviceConfig, EndpointType,
     EvChargeMode, EvChargerCommand, EvChargerStatus, EvChargerWaitReason, EventKind, LevelCommand,
-    MeterRole, RejectReason, ServerMessage,
+    MeterRole, OnOffCommand, RejectReason, RobotVacuumCommand, RobotVacuumStatus, ServerMessage,
 };
 
 const CAPABILITIES_DOC: &str = include_str!("../../../docs/architecture/capabilities.md");
@@ -138,6 +138,8 @@ fn every_capabilities_md_json_example_round_trips() {
                 match device.id.as_str() {
                     "living_room_fan" => assert_device_example(&device),
                     "car_charger" => assert_charger_example(&device),
+                    "hall_plug" => assert_watched_plug_example(&device),
+                    "robot_vacuum" => assert_robot_example(&device),
                     other => panic!("unexpected device example {other}"),
                 }
                 seen.device += 1;
@@ -146,7 +148,7 @@ fn every_capabilities_md_json_example_round_trips() {
         }
     }
 
-    assert_eq!(seen.device, 2, "{seen:?}");
+    assert_eq!(seen.device, 4, "{seen:?}");
     assert_eq!(seen.command, 2, "{seen:?}");
     assert_eq!(seen.command_result, 1, "{seen:?}");
     assert_eq!(seen.event, 1, "{seen:?}");
@@ -156,7 +158,7 @@ fn every_capabilities_md_json_example_round_trips() {
     assert_eq!(seen.device_config, 1, "{seen:?}");
     assert_eq!(
         blocks.len(),
-        11,
+        13,
         "new JSON example in capabilities.md: classify it here"
     );
 }
@@ -226,4 +228,43 @@ fn assert_charger_example(device: &Device) {
         .unwrap();
     assert_eq!(house.features.role, MeterRole::House);
     assert_eq!(house.state.unwrap().energy_wh, None);
+}
+
+fn assert_watched_plug_example(device: &Device) {
+    let plug = &device.endpoints[0];
+    assert_eq!(plug.endpoint_type, EndpointType::Outlet);
+    let on_off = plug.capabilities.on_off.as_ref().unwrap();
+    assert!(on_off.read_only());
+    // Watched only: the Hub refuses to switch it.
+    assert!(
+        !plug
+            .capabilities
+            .supports(&Command::OnOff(OnOffCommand::On))
+    );
+    let meter = plug.capabilities.power_meter.as_ref().unwrap();
+    assert_eq!(meter.features.role, MeterRole::Load);
+    let state = meter.state.unwrap();
+    assert_eq!(state.voltage_v, Some(227.2));
+    assert_eq!(state.energy_wh, None);
+}
+
+fn assert_robot_example(device: &Device) {
+    let robot = &device.endpoints[0];
+    assert_eq!(robot.endpoint_type, EndpointType::RobotVacuum);
+    let vacuum = robot.capabilities.robot_vacuum.as_ref().unwrap();
+    assert_eq!(
+        vacuum.state.as_ref().unwrap().status,
+        RobotVacuumStatus::Docked
+    );
+    assert!(
+        robot
+            .capabilities
+            .supports(&Command::RobotVacuum(RobotVacuumCommand::ReturnToDock))
+    );
+    assert!(
+        !Command::RobotVacuum(RobotVacuumCommand::Start).is_sensitive(EndpointType::RobotVacuum)
+    );
+    let battery = robot.capabilities.battery.as_ref().unwrap().state.unwrap();
+    assert_eq!(battery.percent.get(), 100);
+    assert!(!battery.low);
 }
