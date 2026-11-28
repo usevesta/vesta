@@ -260,13 +260,14 @@ mod tests {
             "--read-only",
             "--listen",
             "0",
+            "--check",
         ])
         .unwrap();
         let Some(Tool::TuyaImport(import)) = import.tool else {
             panic!("expected tuya-import");
         };
         assert_eq!(import.only, ["Hall plug", "Robot"]);
-        assert!(import.read_only);
+        assert!(import.read_only && import.check);
         assert_eq!(import.listen, 0);
         assert!(Args::try_parse_from(["vesta-hubd", "tuya-import", "devices.json"]).is_err());
         assert!(

@@ -130,6 +130,12 @@ export function RobotVacuum({
     ),
   ].filter((button) => button !== null)
 
+  // On a small tile the battery leaves the header, so the status has room.
+  const battery =
+    batteryPercent === undefined ? undefined : (
+      <Battery percent={batteryPercent} low={batteryLow} charging={status === 'charging'} />
+    )
+
   return (
     <div ref={ref} className="h-full min-w-0" data-slot="robot-vacuum" data-status={status}>
       <WidgetFrame
@@ -139,17 +145,14 @@ export function RobotVacuum({
         active={busy}
         pending={pending}
         unavailable={unavailable}
-        headerAction={
-          batteryPercent === undefined ? undefined : (
-            <Battery percent={batteryPercent} low={batteryLow} charging={status === 'charging'} />
-          )
-        }
+        headerAction={compact ? undefined : battery}
       >
         {working && !unavailable && (
           <span aria-hidden className="relative block h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
             <span className="robot-sweep absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary/70" />
           </span>
         )}
+        {compact && battery !== undefined && <div className="flex">{battery}</div>}
         {facts.length > 0 && (
           <p className="text-sm text-muted-foreground tabular-nums">
             <span className="font-medium text-foreground">

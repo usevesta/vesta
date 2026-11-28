@@ -86,6 +86,7 @@ Smart Life app (`python -m tinytuya wizard`, see its README). Then:
 vesta-hubd tuya-import devices.json --out config.json          # adds them; keeps other devices
 vesta-hubd tuya-import devices.json --out config.json --read-only --only "Hall lamp"
 vesta-hubd tuya-import devices.json --out config.json --snapshot snapshot.json   # tinytuya scan results
+vesta-hubd tuya-import devices.json --out config.json --check   # then read each one's status once
 ```
 
 The importer listens for the devices' broadcasts for 12 s (`--listen`) to learn each one's

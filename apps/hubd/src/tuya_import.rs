@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use vesta_drivers::tuya::{self, Discovery, Hint, Options, SkipReason};
+use vesta_drivers::tuya::{self, Discovery, Hint, Options, SkipReason, TuyaConfig};
 
 #[derive(Debug, clap::Args)]
 pub struct TuyaImport {
@@ -42,6 +42,10 @@ pub struct TuyaImport {
     /// Seconds to listen for the devices on the network (0: do not).
     #[arg(long, value_name = "SECONDS", default_value_t = 12)]
     pub listen: u64,
+    /// Afterwards, read each device's status once to check that its key
+    /// works. Only asks; never changes anything on the devices.
+    #[arg(long)]
+    pub check: bool,
 }
 
 fn read(path: &Path) -> anyhow::Result<String> {
@@ -180,7 +184,40 @@ pub async fn run(args: &TuyaImport) -> anyhow::Result<()> {
     println!(
         "It holds the devices' local keys, which control them: keep it out of git, chats and screenshots."
     );
+    if args.check {
+        check(&imported.entries).await;
+    }
     Ok(())
+}
+
+/// Reads each device's status once (a query; nothing is set) and says
+/// whether it answered.
+async fn check(entries: &[tuya::Entry]) {
+    let discovery = Discovery::shared();
+    for entry in entries {
+        let config = match TuyaConfig::from_value(&entry.json["config"]) {
+            Ok(config) => config,
+            Err(error) => {
+                println!("  ✗ {}: {error}", entry.name);
+                continue;
+            }
+        };
+        match tuya::read_status(
+            &config,
+            std::sync::Arc::clone(&discovery),
+            Duration::from_secs(10),
+        )
+        .await
+        {
+            Ok(status) => println!(
+                "  ✓ {} answers (protocol {}, {} values)",
+                entry.name,
+                status.version,
+                status.values.len()
+            ),
+            Err(error) => println!("  ✗ {} does not answer: {error}", entry.name),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +253,7 @@ mod tests {
             only: Vec::new(),
             read_only: true,
             listen: 0,
+            check: false,
         };
         run(&args).await.unwrap();
         let written = std::fs::read_to_string(&out).unwrap();

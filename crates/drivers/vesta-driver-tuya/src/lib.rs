@@ -189,6 +189,8 @@ struct Loop {
     /// The device wants its data points listed in status queries.
     listing: bool,
     warned_version: bool,
+    /// "Not answering yet" was logged (once until it answers).
+    warned_unreachable: bool,
 }
 
 fn now_secs() -> u64 {
@@ -508,6 +510,7 @@ impl TuyaDriver {
         }
         if !state.online {
             state.online = true;
+            state.warned_unreachable = false;
             tracing::info!(%version, "the device answers");
             sink.availability(true).await?;
         }
@@ -624,6 +627,12 @@ impl TuyaDriver {
             state.online = false;
             tracing::warn!(why, "the device stopped answering");
             sink.availability(false).await?;
+        } else if !state.online && !state.warned_unreachable {
+            state.warned_unreachable = true;
+            tracing::warn!(
+                why,
+                "the device does not answer yet; trying again in the background"
+            );
         } else {
             tracing::debug!(why, failures = state.failures, "reaching the device failed");
         }
