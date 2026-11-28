@@ -54,6 +54,16 @@
       "room": "entrance",
       "driver": "sim",
       "config": { "model": "doorbell", "ring_every_sec": 180 }
+    },
+    {
+      "id": "car_charger",
+      "name": "Car Charger",
+      "room": "garage",
+      "driver": "sim",
+      "config": { "model": "ev_charger", "solar": true },
+      "endpoints": {
+        "charger": { "name": "Car Charger" }
+      }
     }
   ]
 }

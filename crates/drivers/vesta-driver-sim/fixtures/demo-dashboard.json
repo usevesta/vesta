@@ -59,6 +59,12 @@
           "col_span": 1,
           "row_span": 1,
           "props": { "label": "Fan Light" }
+        },
+        {
+          "type": "ev-charger",
+          "target": "car_charger/charger",
+          "col_span": 2,
+          "row_span": 1
         }
       ]
     },
@@ -88,6 +94,20 @@
           "col_span": 4,
           "row_span": 1,
           "props": { "label": "Front Door" }
+        }
+      ]
+    },
+    {
+      "id": "energy",
+      "title": "Energy",
+      "icon": "ev_charger",
+      "grid_columns": 4,
+      "widgets": [
+        {
+          "type": "ev-charger",
+          "target": "car_charger/charger",
+          "col_span": 4,
+          "row_span": 1
         }
       ]
     }

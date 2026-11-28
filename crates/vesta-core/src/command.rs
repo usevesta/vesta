@@ -105,14 +105,27 @@ pub enum TriggerCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum EvChargerCommand {
+    /// Stops charging until `resume` (needs `features.pause`).
     Pause,
     Resume,
-    /// Always clamped to `max_current_a`.
+    /// The current to offer the car, always clamped to the range the
+    /// charger accepts right now (needs `features.adjustable_current`). The
+    /// charger's own power control may still lower it.
     SetCurrent {
         amps: f64,
     },
+    /// Needs `mode` in `features.modes`.
     SetMode {
         mode: EvChargeMode,
+    },
+    /// Nobody can charge until `unlock` (needs `features.lock`).
+    Lock,
+    /// Sensitive: anyone could charge afterwards.
+    Unlock,
+    /// Switches the charger's own schedule on or off (needs
+    /// `features.schedule`).
+    SetSchedule {
+        enabled: bool,
     },
 }
 
@@ -135,7 +148,8 @@ impl Command {
     /// Whether this command needs an authorized role and explicit user
     /// confirmation (biometric on mobile) before the Hub runs it.
     ///
-    /// Sensitive: `lock.unlock`, `lock.unlatch`, `trigger.fire`, and
+    /// Sensitive: `lock.unlock`, `lock.unlatch`, `trigger.fire`,
+    /// `ev_charger.unlock` (anyone could charge afterwards), and
     /// `cover.open` / `cover.set_position` on endpoints that guard access to
     /// the home (`garage_door`, `gate`, `door`, `lock`). Matches are
     /// exhaustive on purpose: a new command must take a decision here.
@@ -148,12 +162,20 @@ impl Command {
                 endpoint_type.guards_access()
             }
             Self::Cover(CoverCommand::Close | CoverCommand::Stop) => false,
+            Self::EvCharger(EvChargerCommand::Unlock) => true,
+            Self::EvCharger(
+                EvChargerCommand::Pause
+                | EvChargerCommand::Resume
+                | EvChargerCommand::SetCurrent { .. }
+                | EvChargerCommand::SetMode { .. }
+                | EvChargerCommand::Lock
+                | EvChargerCommand::SetSchedule { .. },
+            ) => false,
             Self::OnOff(_)
             | Self::Level(_)
             | Self::ColorTemperature(_)
             | Self::Color(_)
-            | Self::Fan(_)
-            | Self::EvCharger(_) => false,
+            | Self::Fan(_) => false,
         }
     }
 }
@@ -274,7 +296,9 @@ impl From<&DriverError> for CommandError {
     /// addresses); clients only get the stable code.
     fn from(error: &DriverError) -> Self {
         match error {
-            DriverError::Unsupported | DriverError::UnknownEndpoint(_) => Self::Unsupported,
+            DriverError::Unsupported | DriverError::ReadOnly | DriverError::UnknownEndpoint(_) => {
+                Self::Unsupported
+            }
             DriverError::Offline => Self::Offline,
             DriverError::Timeout => Self::Timeout,
             DriverError::InvalidConfig(_)
@@ -371,12 +395,26 @@ mod tests {
                 transition_ms: None,
             }),
             Command::Fan(FanCommand::SetSpeed { speed: 3 }),
+            Command::EvCharger(EvChargerCommand::Pause),
             Command::EvCharger(EvChargerCommand::Resume),
+            Command::EvCharger(EvChargerCommand::SetCurrent { amps: 16.0 }),
+            Command::EvCharger(EvChargerCommand::SetMode {
+                mode: EvChargeMode::Solar,
+            }),
+            Command::EvCharger(EvChargerCommand::Lock),
+            Command::EvCharger(EvChargerCommand::SetSchedule { enabled: false }),
         ];
         for ty in ALL_TYPES {
             for cmd in &commands {
                 assert!(!cmd.is_sensitive(ty), "{cmd:?} on {ty:?}");
             }
+        }
+    }
+
+    #[test]
+    fn unlocking_a_charger_is_sensitive() {
+        for ty in ALL_TYPES {
+            assert!(Command::EvCharger(EvChargerCommand::Unlock).is_sensitive(ty));
         }
     }
 

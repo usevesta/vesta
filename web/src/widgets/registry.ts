@@ -15,6 +15,7 @@ import { CameraPreview, type CameraPreviewProps } from '@/widgets/camera-preview
 import { ClockWeather, type ClockWeatherProps } from '@/widgets/clock-weather/ClockWeather'
 import { CoverControl, type CoverControlProps } from '@/widgets/cover-control/CoverControl'
 import { DoorButton, type DoorButtonProps } from '@/widgets/door-button/DoorButton'
+import { EvCharger, type EvChargerProps } from '@/widgets/ev-charger/EvCharger'
 import { FanControl, type FanControlProps } from '@/widgets/fan-control/FanControl'
 import { LightControl, type LightControlProps } from '@/widgets/light-control/LightControl'
 import type { SizePreset } from '@/widgets/sizes'
@@ -26,6 +27,7 @@ export interface WidgetPropsMap {
   'cover-control': CoverControlProps
   'door-button': DoorButtonProps
   'camera-preview': CameraPreviewProps
+  'ev-charger': EvChargerProps
   'clock-weather': ClockWeatherProps
 }
 
@@ -39,6 +41,7 @@ export const widgetRegistry: WidgetRegistry = {
   'cover-control': CoverControl,
   'door-button': DoorButton,
   'camera-preview': CameraPreview,
+  'ev-charger': EvCharger,
   'clock-weather': ClockWeather,
 }
 
@@ -48,6 +51,7 @@ export const WIDGET_TYPES = [
   'cover-control',
   'door-button',
   'camera-preview',
+  'ev-charger',
   'clock-weather',
 ] as const satisfies readonly WidgetType[]
 
@@ -109,12 +113,15 @@ export const widgetMeta: Readonly<Record<WidgetType, WidgetMeta>> = {
     icon: 'door',
   },
   'camera-preview': { endpointTypes: ['camera', 'doorbell'], defaultSize: 'large', icon: 'camera' },
+  // Large: the energy flow and every control fit; smaller sizes open them in a dialog.
+  'ev-charger': { endpointTypes: ['ev_charger'], needsAnyOf: ['ev_charger'], defaultSize: 'large', icon: 'ev_charger' },
   'clock-weather': { endpointTypes: [], defaultSize: 'wide', icon: 'clock' },
 }
 
 /**
  * The widget that shows an endpoint of `type` with these capabilities,
- * or null if no widget can show it yet (e.g. sensors and meters). The
+ * or null if no widget can show it yet (e.g. sensors and meters; a
+ * charger's meters show inside its own tile). The
  * first match in `WIDGET_TYPES` order wins.
  */
 export function pickWidgetType(type: EndpointType, capabilities: readonly CapabilityKind[]): WidgetType | null {

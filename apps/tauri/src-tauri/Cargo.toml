@@ -20,7 +20,7 @@ path = "src/main.rs"
 [features]
 default = []
 # Run the Hub in-process (wall tablet, desktop panel). Never on iOS.
-hub = ["dep:vesta-core", "dep:vesta-drivers", "dep:vesta-hub", "vesta-drivers/sim"]
+hub = ["dep:vesta-core", "dep:vesta-drivers", "dep:vesta-hub", "vesta-drivers/sim", "vesta-drivers/v2c"]
 
 [build-dependencies]
 tauri-build.workspace = true

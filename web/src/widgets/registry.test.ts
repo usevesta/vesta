@@ -39,6 +39,8 @@ describe('picking a widget for a thing in the home', () => {
     expect(pick('lock', 'lock')).toBe('door-button')
     expect(pick('camera', 'camera', 'occupancy')).toBe('camera-preview')
     expect(pick('doorbell', 'doorbell', 'occupancy')).toBe('camera-preview')
+    expect(pick('ev_charger', 'ev_charger')).toBe('ev-charger')
+    expect(pick('ev_charger', 'ev_charger', 'power_meter')).toBe('ev-charger')
   })
 
   it('uses capabilities to tell apart things of the same type', () => {
@@ -50,13 +52,14 @@ describe('picking a widget for a thing in the home', () => {
     expect(pick('gate', 'trigger')).toBe('door-button')
     // A fan endpoint without fan controls, or a light without on/off: nothing fits.
     expect(pick('fan', 'on_off')).toBeNull()
+    // A charger type without charger data (e.g. only a meter): nothing fits.
+    expect(pick('ev_charger', 'power_meter')).toBeNull()
     expect(pick('light', 'level')).toBeNull()
   })
 
   it('offers nothing for things no widget can show yet', () => {
     expect(pick('sensor', 'temperature', 'humidity')).toBeNull()
     expect(pick('meter', 'power_meter')).toBeNull()
-    expect(pick('ev_charger', 'ev_charger', 'power_meter')).toBeNull()
   })
 
   it('has metadata for every widget, and the clock needs no device', () => {

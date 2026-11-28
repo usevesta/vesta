@@ -60,6 +60,17 @@
         "local_key": "CHANGE_ME_16_CHAR",
         "protocol_version": "3.3"
       }
+    },
+    {
+      "id": "car_charger",
+      "name": "Car Charger",
+      "room": "garage",
+      "driver": "v2c",
+      "config": {
+        "host": "192.0.2.10",
+        "read_only": false,
+        "meters": { "grid": true, "house": true, "solar": false, "battery": false }
+      }
     }
   ]
 }

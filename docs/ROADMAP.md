@@ -20,7 +20,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 ### v2 — Doorbell, door access & energy
 - Video doorbell: live WebRTC video, two-way audio, ring event, wake the panel.
 - Door opening: motorized smart lock (stateful lock) or electric strike (momentary trigger), with biometric confirmation.
-- Energy: EV chargers with a local API (e.g. V2C Trydan), power meters (e.g. Shelly Pro EM), energy-flow widget.
+- Energy: EV chargers with a local API (V2C Trydan driver and the energy-flow charger widget: done), power meters (e.g. Shelly Pro EM).
 - Full Android kiosk: Device Owner provisioning, LockTask, silent OTA.
 - Shelly driver.
 
@@ -37,6 +37,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 | Configuration from the UI (no JSON editing) | Largest chunk of work; decides whether VESTA is really out-of-the-box | Start with a simple editor; JSON is only the persistence format |
 | Android specifics | Device Owner needed for real kiosk and silent OTA; `go2rtc` can't be a Tauri sidecar on Android and can't run from writable storage (ship as `lib*.so` in `jniLibs`); Hub must live in a Foreground Service | Early spike on real hardware |
 | Pairing & secure tunnel | Must be right without inventing crypto; local proxy on every platform | iroh (QUIC/TLS 1.3), design review before implementation |
+| Device APIs without a password (e.g. EV chargers on the home Wi-Fi) | Anyone on the network can already control them; their safety settings must never be touched by mistake | VESTA adds no exposure; drivers write only a closed list of everyday settings, tested (AGENTS.md rule 7) |
 | Tuya onboarding | `local_key` requires a one-time Tuya cloud account; several protocol versions (3.3/3.4/3.5); data points need per-category mapping | Acceptable for v1; not the showcase driver for new users |
 | Remote access behind CGNAT | Direct connection may fail; free relays are best-effort | Relay as plan B; WebRTC peer-to-peer for media |
 | Doorbell hardware | Few models offer two-way audio that `go2rtc` supports natively | Pick a model only after a spike |

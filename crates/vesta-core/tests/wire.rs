@@ -123,6 +123,24 @@ fn every_command_has_the_documented_shape() {
             }),
             json!({ "capability": "ev_charger", "action": "set_mode", "mode": "solar" }),
         ),
+        (
+            Command::EvCharger(EvChargerCommand::SetMode {
+                mode: EvChargeMode::SolarGrid,
+            }),
+            json!({ "capability": "ev_charger", "action": "set_mode", "mode": "solar_grid" }),
+        ),
+        (
+            Command::EvCharger(EvChargerCommand::Lock),
+            json!({ "capability": "ev_charger", "action": "lock" }),
+        ),
+        (
+            Command::EvCharger(EvChargerCommand::Unlock),
+            json!({ "capability": "ev_charger", "action": "unlock" }),
+        ),
+        (
+            Command::EvCharger(EvChargerCommand::SetSchedule { enabled: true }),
+            json!({ "capability": "ev_charger", "action": "set_schedule", "enabled": true }),
+        ),
     ];
     for (command, expected) in cases {
         assert_eq!(
@@ -314,19 +332,38 @@ fn every_capability_state_has_the_documented_shape() {
         (
             PowerMeterState {
                 power_w: -1250.0,
-                energy_wh: 1_000_000.0,
+                energy_wh: Some(1_000_000.0),
                 energy_exported_wh: Some(250_000.0),
+                limit_w: None,
             }
             .into(),
             json!({ "power_w": -1250.0, "energy_wh": 1_000_000.0, "energy_exported_wh": 250_000.0 }),
         ),
         (
+            PowerMeterState {
+                power_w: 5517.8,
+                energy_wh: None,
+                energy_exported_wh: None,
+                limit_w: Some(5700.0),
+            }
+            .into(),
+            json!({ "power_w": 5517.8, "limit_w": 5700.0 }),
+        ),
+        (
             EvChargerState {
                 status: EvChargerStatus::Charging,
+                waiting_for: None,
                 power_w: 3680.0,
                 session_energy_wh: 4200.0,
+                session_duration_s: None,
                 current_a: 16.0,
-                mode: EvChargeMode::Manual,
+                auto_current: None,
+                phase_current_a: None,
+                min_current_a: None,
+                max_current_a: None,
+                mode: Some(EvChargeMode::Manual),
+                locked: None,
+                schedule_enabled: None,
             }
             .into(),
             json!({
@@ -335,6 +372,39 @@ fn every_capability_state_has_the_documented_shape() {
                 "session_energy_wh": 4200.0,
                 "current_a": 16.0,
                 "mode": "manual"
+            }),
+        ),
+        (
+            EvChargerState {
+                status: EvChargerStatus::Waiting,
+                waiting_for: Some(EvChargerWaitReason::Power),
+                power_w: 0.0,
+                session_energy_wh: 4890.0,
+                session_duration_s: Some(3841),
+                current_a: 6.0,
+                auto_current: Some(true),
+                phase_current_a: Some(vec![0.0, 0.0, 0.0]),
+                min_current_a: Some(6.0),
+                max_current_a: Some(30.0),
+                mode: Some(EvChargeMode::SolarGrid),
+                locked: Some(false),
+                schedule_enabled: Some(true),
+            }
+            .into(),
+            json!({
+                "status": "waiting",
+                "waiting_for": "power",
+                "power_w": 0.0,
+                "session_energy_wh": 4890.0,
+                "session_duration_s": 3841,
+                "current_a": 6.0,
+                "auto_current": true,
+                "phase_current_a": [0.0, 0.0, 0.0],
+                "min_current_a": 6.0,
+                "max_current_a": 30.0,
+                "mode": "solar_grid",
+                "locked": false,
+                "schedule_enabled": true
             }),
         ),
         (
@@ -425,6 +495,10 @@ fn full_catalog_endpoint_round_trips() {
                 min_current_a: 6.0,
                 max_current_a: 32.0,
                 modes: vec![EvChargeMode::Manual, EvChargeMode::Scheduled],
+                pause: true,
+                adjustable_current: true,
+                lock: true,
+                schedule: false,
             },
             state: None,
         }),

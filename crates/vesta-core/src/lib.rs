@@ -33,11 +33,11 @@ pub use capability::{
     ColorTemperatureFeatures, ColorTemperatureState, ContactCapability, ContactState,
     CoverCapability, CoverFeatures, CoverKind, CoverMotion, CoverState, DoorbellCapability,
     EvChargeMode, EvChargerCapability, EvChargerFeatures, EvChargerState, EvChargerStatus,
-    FanCapability, FanDirection, FanFeatures, FanState, HumidityCapability, HumidityState,
-    LevelCapability, LevelState, LockCapability, LockFeatures, LockState, LockStatus, MeterRole,
-    OccupancyCapability, OccupancyState, OnOffCapability, OnOffState, PowerMeterCapability,
-    PowerMeterFeatures, PowerMeterState, TemperatureCapability, TemperatureState,
-    TriggerCapability,
+    EvChargerWaitReason, FanCapability, FanDirection, FanFeatures, FanState, HumidityCapability,
+    HumidityState, LevelCapability, LevelState, LockCapability, LockFeatures, LockState,
+    LockStatus, MeterRole, OccupancyCapability, OccupancyState, OnOffCapability, OnOffState,
+    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, TemperatureCapability,
+    TemperatureState, TriggerCapability,
 };
 pub use command::{
     ColorCommand, ColorTemperatureCommand, Command, CommandError, CommandRequest, CommandResult,
