@@ -89,7 +89,13 @@ function Readout({ watts, size = 'lg' }: { watts: number | undefined; size?: 'lg
 /** A thin bar; a light sweeps through it while the car charges. */
 function ChargeBar({ charging }: { charging: boolean }) {
   return (
-    <span aria-hidden className="energy-layer relative block h-1.5 w-full overflow-hidden rounded-full bg-muted">
+    <span
+      aria-hidden
+      className={cn(
+        'energy-layer relative block h-1.5 w-full overflow-hidden rounded-full transition-colors duration-500',
+        charging ? 'bg-energy-car/20' : 'bg-muted',
+      )}
+    >
       {charging && (
         <span className="energy-sweep absolute inset-y-0 left-0 w-2/5 rounded-full bg-linear-to-r from-transparent via-energy-car to-transparent" />
       )}
@@ -187,7 +193,7 @@ function ChargerDetails(props: EvChargerProps) {
       ref={ref}
       className={cn(
         
-        sideBySide ? 'grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-6' : 'flex flex-col gap-5',
+        sideBySide ? 'grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-center gap-8' : 'flex flex-col gap-5',
       )}
     >
       <section className="flex flex-col gap-4" aria-label={t('ev.flowTitle')}>
@@ -341,7 +347,7 @@ export function EvCharger(props: EvChargerProps) {
       </WidgetFrame>
       {!inline && (
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="max-h-[92dvh] gap-5 overflow-y-auto p-6 sm:max-w-3xl">
+          <DialogContent className="max-h-[94dvh] gap-5 overflow-y-auto p-6 sm:max-w-5xl">
             <DialogHeader className="flex-row items-center gap-3 pr-10 text-left">
               <span
                 className={cn(

@@ -249,6 +249,8 @@ export const es: Translation = {
       house: 'Casa',
       car: 'Coche',
       battery: 'Batería',
+      gridExport: 'A la red',
+      batteryCharging: 'Batería, cargando',
     },
     flowTitle: 'Adónde va la electricidad',
     flowLabel: 'Adónde va la electricidad: {{summary}}',

@@ -89,8 +89,8 @@ interface Layout {
 
 function layout(hasSolar: boolean, hasBattery: boolean): Layout {
   const top = 30
-  const middle = hasSolar ? 134 : 44
-  const bottom = middle + 104
+  const middle = hasSolar ? 142 : 44
+  const bottom = middle + 110
   return {
     height: hasBattery ? bottom + NODE_R + 8 : middle + NODE_R + 44,
     house: { x: X.house, y: middle },
@@ -344,7 +344,13 @@ export function EnergyFlow({ readings, frozen = false, className }: EnergyFlowPr
           at={geometry.nodes[link.node]}
           active={link.active}
           value={kw(link.watts)}
-          name={names[link.node]}
+          name={
+            link.active && link.direction === 'out' && link.node === 'grid'
+              ? t('ev.nodes.gridExport')
+              : link.active && link.direction === 'out' && link.node === 'battery'
+                ? t('ev.nodes.batteryCharging')
+                : names[link.node]
+          }
           labels={link.node === 'solar' || link.node === 'battery' ? 'right' : 'below'}
         />
       ))}

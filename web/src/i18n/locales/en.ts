@@ -250,6 +250,8 @@ export const en = {
       house: 'House',
       car: 'Car',
       battery: 'Battery',
+      gridExport: 'To the grid',
+      batteryCharging: 'Battery, charging',
     },
     flowTitle: 'Where the power goes',
     flowLabel: 'Where the power goes: {{summary}}',
