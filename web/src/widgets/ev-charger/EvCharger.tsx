@@ -86,6 +86,8 @@ export interface EvChargerProps extends WidgetStatusProps {
   onScheduleChange?: CommandHandler<[boolean]>
   /** Present when the hours can be changed from here. */
   onChargingScheduleChange?: CommandHandler<[ChargingSchedule]>
+  /** Present when the hours can be read from the charger (when the hours editor opens). */
+  onRefreshChargingSchedule?: CommandHandler
 }
 
 function Readout({ watts, size = 'lg' }: { watts: number | undefined; size?: 'lg' | 'xl' }) {
@@ -263,6 +265,7 @@ function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { setti
                 chargingSchedule: props.chargingSchedule,
                 scheduleFeatures: props.scheduleFeatures,
                 onChargingScheduleChange: props.onChargingScheduleChange,
+                onRefreshChargingSchedule: props.onRefreshChargingSchedule,
               }
             : { modes: [] })}
         />

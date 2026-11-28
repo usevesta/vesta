@@ -143,6 +143,28 @@ describe('live client', () => {
     )
   })
 
+  it('reads a charger’s hours quietly: longer, no message, done when the home answers', async () => {
+    const { sockets, client, failures, store } = setup()
+    const refresh = { capability: 'ev_charger', action: 'refresh_charging_schedule' } as const
+    const read = client.sendCommand('car_charger/charger', refresh, { quiet: true })
+    vi.advanceTimersByTime(COMMAND_TIMEOUT_MS)
+    // The home has not answered yet: still waiting, nothing said.
+    expect(failures).toEqual([])
+    sockets.receive({ type: 'command_result', request_id: 'c-test-1', ok: true })
+    await expect(read).resolves.toEqual({ ok: true })
+    // Nothing to confirm on the charger itself.
+    expect(store.getState().pending).toEqual({})
+
+    const failed = client.sendCommand('car_charger/charger', refresh, { quiet: true })
+    sockets.receive({ type: 'command_result', request_id: 'c-test-2', ok: false, error: { code: 'device' } })
+    await expect(failed).resolves.toMatchObject({ ok: false, reason: 'device' })
+    const lost = client.sendCommand('car_charger/charger', refresh, { quiet: true })
+    vi.advanceTimersByTime(SLOW_COMMAND_TIMEOUT_MS)
+    await expect(lost).resolves.toMatchObject({ ok: false, reason: 'no_response' })
+    // The editor says it itself; no message from the app.
+    expect(failures).toEqual([])
+  })
+
   it('counts a visible change as success even if the answer got lost', async () => {
     const { sockets, client, failures } = setup()
     const outcome = client.sendCommand(FAN_LIGHT, { capability: 'on_off', action: 'on' })

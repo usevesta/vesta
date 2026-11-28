@@ -31,8 +31,15 @@ const BATTERY_WH = 10_000
 const BATTERY_MAX_W = 2_500
 /** Saving hours goes "through the internet": slower than other settings. */
 const SAVE_HOURS_MS = 1_600
+/** Reading them too. */
+const READ_HOURS_MS = 1_200
+/** The sample home last read its charger's hours a while ago. */
+const LAST_READ_MS = 3 * 60 * 60 * 1_000
 
-/** Like a charger whose hours are saved through the internet and not reported. */
+/**
+ * Like a charger whose hours are not reported: saved and read (when the
+ * hours editor opens) through the internet.
+ */
 export const DEMO_SCHEDULE_FEATURES: ChargingScheduleFeatures = {
   max_windows: 2,
   weekdays: true,
@@ -40,6 +47,7 @@ export const DEMO_SCHEDULE_FEATURES: ChargingScheduleFeatures = {
   editable: true,
   reports_windows: false,
   saving_needs_internet: true,
+  refreshable: true,
 }
 
 export interface DemoCharger {
@@ -56,7 +64,7 @@ export interface DemoCharger {
   readonly scheduleEnabled: boolean
   /** The hours it follows (23:00–07:00 every day until changed). */
   readonly windows: readonly ChargingWindow[]
-  /** The hours as last saved from this screen (unknown until then). */
+  /** The hours as last read or saved, with where from and when. */
   readonly chargingSchedule?: ChargingSchedule
   readonly readings: EnergyReadings
   readonly pending: boolean
@@ -188,6 +196,12 @@ export const useDemoCharger = create<DemoCharger>()(() =>
       sessionDurationS: 1_920,
       measuredA: [],
       readings: {},
+      // Kept from an earlier visit: the last known hours.
+      chargingSchedule: {
+        enabled: INITIAL_SETTINGS.scheduleEnabled,
+        windows: [...INITIAL_SETTINGS.windows],
+        origin: { source: 'charger', at: new Date(Date.now() - LAST_READ_MS).toISOString(), restored: true },
+      },
       pending: false,
     },
     INITIAL_SETTINGS,
@@ -247,8 +261,28 @@ export async function saveDemoSchedule(schedule: ChargingSchedule): Promise<bool
   const settings: Settings = { ...settingsOf(state), scheduleEnabled: schedule.enabled, windows: schedule.windows }
   useDemoCharger.setState({
     ...step(state, settings, 0),
-    chargingSchedule: schedule,
+    chargingSchedule: {
+      enabled: schedule.enabled,
+      windows: schedule.windows,
+      origin: { source: 'saved', at: new Date().toISOString(), restored: false },
+    },
     pending: sequence !== latest,
+  })
+  return true
+}
+
+/** Reads the hours set on the charger "through the internet": a moment, then they show. */
+export async function refreshDemoSchedule(): Promise<boolean> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, READ_HOURS_MS)
+  })
+  const state = useDemoCharger.getState()
+  useDemoCharger.setState({
+    chargingSchedule: {
+      enabled: state.scheduleEnabled,
+      windows: [...state.windows],
+      origin: { source: 'charger', at: new Date().toISOString(), restored: false },
+    },
   })
   return true
 }

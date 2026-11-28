@@ -1,7 +1,14 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ChargingSchedule, ChargingScheduleFeatures, ChargingWindow, TimeOfDay } from '@/api/generated'
+import type {
+  ChargingSchedule,
+  ChargingScheduleFeatures,
+  ChargingWindow,
+  ScheduleOrigin,
+  TimeOfDay,
+} from '@/api/generated'
+import { BusyIcon } from '@/components/BusyIcon'
 import { CommandButton } from '@/components/CommandButton'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
@@ -17,12 +24,16 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { isPromiseLike, isSuccess, type CommandHandler } from '@/lib/command-gate'
 import { useCommand } from '@/lib/use-command'
+import { useNow } from '@/lib/use-now'
 import { cn } from '@/lib/utils'
 import {
+  ageOf,
   daysSummary,
   formatTime,
   isOvernight,
   newWindow,
+  originKey,
+  sameHours,
   scheduleProblem,
   toggleDay,
   uniqueWindows,
@@ -47,17 +58,77 @@ function useWindowText() {
   }
 }
 
-/** The hours, one line per window (read-only). */
+/** The hours, one line per window (read-only). No windows: none are set on the charger. */
 export function ScheduleSummary({ windows }: { windows: readonly ChargingWindow[] }) {
+  const { t } = useTranslation()
   const text = useWindowText()
+  const unique = uniqueWindows(windows)
+  if (unique.length === 0) return <p className="text-base font-medium">{t('ev.hours.noneSet')}</p>
   return (
     <ul className="flex flex-col gap-0.5">
-      {uniqueWindows(windows).map((window, index) => (
+      {unique.map((window, index) => (
         <li key={index} className="text-base font-medium tabular-nums">
           {text(window)}
         </li>
       ))}
     </ul>
+  )
+}
+
+export interface HoursOriginProps {
+  /** Where the hours on screen came from, and when (absent: not known). */
+  origin?: ScheduleOrigin
+  /** The hours are being read from the charger right now. */
+  checking?: boolean
+  /** The last reading did not work; the hours on screen are the last known. */
+  checkFailed?: boolean
+  /** Hours are on screen (they are the last known when reading failed). */
+  known?: boolean
+}
+
+/**
+ * Where the hours came from and how long ago ("Hours read from the charger
+ * just now"), "Checking…" while they are read, or a gentle note when that
+ * did not work. Never in the way: the hours stay usable meanwhile.
+ */
+export function HoursOrigin({ origin, checking = false, checkFailed = false, known = true }: HoursOriginProps) {
+  const { t, i18n } = useTranslation()
+  const now = useNow('minute')
+  let line: ReactNode = null
+  if (checking) {
+    line = (
+      <>
+        <BusyIcon busy className="size-4 shrink-0" />
+        {t('ev.hours.checking')}
+      </>
+    )
+  } else if (origin !== undefined) {
+    const age = ageOf(origin.at, now, i18n.language)
+    const ageText = 'key' in age ? t(age.key) : age.text
+    line = (
+      <>
+        <Icon name="info" className="mt-0.5 size-4 shrink-0" />
+        {t(originKey(origin), { age: ageText }).trim()}
+      </>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-1" data-slot="hours-origin" aria-live="polite">
+      {line !== null && (
+        <p
+          className="flex items-start gap-1.5 text-sm leading-snug text-muted-foreground"
+          data-checking={checking || undefined}
+        >
+          {line}
+        </p>
+      )}
+      {!checking && checkFailed && (
+        <p role="status" className="flex items-start gap-1.5 text-sm leading-snug text-muted-foreground">
+          <Icon name="unavailable" className="mt-0.5 size-4 shrink-0" />
+          {known ? t('ev.hours.checkFailed') : t('ev.hours.checkFailedNone')}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -182,21 +253,35 @@ function WindowFields({
   )
 }
 
+/** What the editor starts from: the hours known now, or a usual night. */
+function draftOf(schedule: ChargingSchedule | undefined): ChargingWindow[] {
+  const known = uniqueWindows(schedule?.windows ?? [])
+  return known.length > 0 ? known : [newWindow()]
+}
+
 function EditorBody({
   label,
   features,
   schedule,
   enabled,
+  checking = false,
+  checkFailed = false,
   onSave,
   onDone,
 }: Omit<ScheduleEditorProps, 'open' | 'onOpenChange'> & { onDone: () => void }) {
   const { t } = useTranslation()
   const switchId = useId()
-  const [useHours, setUseHours] = useState(enabled)
-  const [windows, setWindows] = useState<ChargingWindow[]>(() => {
-    const known = uniqueWindows(schedule?.windows ?? [])
-    return known.length > 0 ? known : [newWindow()]
-  })
+  // Until the person changes something, the editor follows the hours as
+  // they arrive (e.g. read from the charger just after it opened).
+  const [editedUseHours, setUseHours] = useState<boolean | null>(null)
+  const [edited, setWindows] = useState<ChargingWindow[] | null>(null)
+  const [openedWith] = useState(() => schedule?.windows)
+  const useHours = editedUseHours ?? enabled
+  const windows = edited ?? draftOf(schedule)
+  // The hours changed while the editor was open (read from the charger).
+  const changed =
+    openedWith !== undefined && schedule !== undefined && !sameHours(openedWith, schedule.windows)
+  const firstKnown = openedWith === undefined && schedule !== undefined
   // Closes once the charger has the hours; stays open (with the message)
   // when saving failed.
   const save = useCommand((next: ChargingSchedule) => {
@@ -217,6 +302,20 @@ function EditorBody({
   return (
     <>
       <div className="flex flex-col gap-4" aria-busy={busy || undefined}>
+        {!features.reports_windows && (
+          <HoursOrigin
+            origin={schedule?.origin}
+            checking={checking}
+            checkFailed={checkFailed}
+            known={schedule !== undefined}
+          />
+        )}
+        {!checking && (changed || firstKnown) && (
+          <p role="status" className="flex items-start gap-1.5 text-sm leading-snug text-foreground">
+            <Icon name={edited === null ? 'success' : 'warning'} className="mt-0.5 size-4 shrink-0" />
+            {edited === null ? t('ev.hours.updatedFromCharger') : t('ev.hours.changedWhileEditing')}
+          </p>
+        )}
         <label htmlFor={switchId} className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl">
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="text-base leading-tight font-medium">{t('ev.hours.useThem')}</span>
@@ -300,6 +399,10 @@ export interface ScheduleEditorProps {
   schedule?: ChargingSchedule
   /** The schedule is on now. */
   enabled: boolean
+  /** The hours are being read from the charger (the editor stays usable). */
+  checking?: boolean
+  /** Reading them did not work: what shows are the last known hours. */
+  checkFailed?: boolean
   /** Stores the hours in the charger. A promise keeps Save busy; the dialog closes once it worked. */
   onSave: CommandHandler<[ChargingSchedule]>
 }

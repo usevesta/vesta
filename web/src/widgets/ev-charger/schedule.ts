@@ -4,7 +4,13 @@
  * again before anything reaches the charger; this only keeps Save honest.
  * No React, so it is unit tested.
  */
-import type { ChargingScheduleFeatures, ChargingWindow, TimeOfDay, Weekday } from '@/api/generated'
+import type {
+  ChargingScheduleFeatures,
+  ChargingWindow,
+  ScheduleOrigin,
+  TimeOfDay,
+  Weekday,
+} from '@/api/generated'
 
 /** Monday first, like the charger and the capability model. */
 export const WEEK: readonly Weekday[] = [
@@ -100,13 +106,60 @@ export function formatTime(time: TimeOfDay, language: string): string {
   return new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).format(date)
 }
 
+function windowKey(window: ChargingWindow): string {
+  return `${window.start}-${window.end}-${sortDays(window.days).join(',')}`
+}
+
 /** Identical windows once (a charger may hold the same hours twice). */
 export function uniqueWindows(windows: readonly ChargingWindow[]): ChargingWindow[] {
   const seen = new Set<string>()
   return windows.filter((window) => {
-    const key = `${window.start}-${window.end}-${sortDays(window.days).join(',')}`
+    const key = windowKey(window)
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
+}
+
+/** The same hours (order and repeats aside), e.g. before and after reading them again. */
+export function sameHours(a: readonly ChargingWindow[], b: readonly ChargingWindow[]): boolean {
+  const keys = (windows: readonly ChargingWindow[]) => uniqueWindows(windows).map(windowKey).sort().join('|')
+  return keys(a) === keys(b)
+}
+
+/** Where the hours on screen came from, as a translation key (each takes `{{age}}`). */
+export type OriginKey =
+  | 'ev.hours.origin.charger'
+  | 'ev.hours.origin.saved'
+  | 'ev.hours.origin.restoredCharger'
+  | 'ev.hours.origin.restoredSaved'
+
+export function originKey(origin: ScheduleOrigin): OriginKey {
+  if (origin.restored) {
+    return origin.source === 'charger' ? 'ev.hours.origin.restoredCharger' : 'ev.hours.origin.restoredSaved'
+  }
+  return origin.source === 'charger' ? 'ev.hours.origin.charger' : 'ev.hours.origin.saved'
+}
+
+/** How long ago, in plain words: "just now" (a key), or "5 minutes ago", "yesterday", "3 days ago". */
+export type Age = { readonly key: 'ev.hours.justNow' } | { readonly text: string }
+
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+/**
+ * How long ago `at` (RFC 3339) was, at `now`, in the screen's language.
+ * Under a minute, or a time in the future (clocks a little apart), is
+ * "just now"; a time that cannot be read says nothing.
+ */
+export function ageOf(at: string, now: Date, language: string): Age {
+  const then = Date.parse(at)
+  if (Number.isNaN(then)) return { text: '' }
+  const ago = now.getTime() - then
+  if (ago < MINUTE_MS) return { key: 'ev.hours.justNow' }
+  const words = new Intl.RelativeTimeFormat(language, { numeric: 'auto' })
+  if (ago < HOUR_MS) return { text: words.format(-Math.floor(ago / MINUTE_MS), 'minute') }
+  if (ago < DAY_MS) return { text: words.format(-Math.floor(ago / HOUR_MS), 'hour') }
+  return { text: words.format(-Math.floor(ago / DAY_MS), 'day') }
 }

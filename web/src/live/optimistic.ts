@@ -74,6 +74,8 @@ function evChargerPrediction(command: Extract<Command, { capability: 'ev_charger
         schedule_enabled: command.enabled,
         charging_schedule: { enabled: command.enabled, windows: command.windows },
       }
+    case 'refresh_charging_schedule':
+      return {}
   }
 }
 
@@ -133,6 +135,9 @@ export function predict(command: Command, endpoint: Endpoint | undefined): Predi
     case 'trigger':
       return { predicted: {}, confirmsWith: null }
     case 'ev_charger': {
+      // Reading a charger's hours changes nothing on it: done once the
+      // home answers (the hours it read, if new, arrive as state).
+      if (command.action === 'refresh_charging_schedule') return { predicted: {}, confirmsWith: null }
       const partial = evChargerPrediction(command)
       return {
         predicted: Object.keys(partial).length === 0 ? {} : { ev_charger: partial },

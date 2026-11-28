@@ -81,7 +81,7 @@
       "name": "Car Charger",
       "room": "garage",
       "driver": "sim",
-      "config": { "model": "ev_charger", "solar": true },
+      "config": { "model": "ev_charger", "solar": true, "hours": "on_request" },
       "endpoints": {
         "charger": { "name": "Car Charger" }
       }

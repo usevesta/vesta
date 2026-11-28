@@ -38,14 +38,18 @@ import {
 /** How long a command may stay unconfirmed before the screen reverts it. */
 export const COMMAND_TIMEOUT_MS = 5_000
 /**
- * The same for slow commands (saving a charger's hours may go through the
- * internet). Matches `SLOW_COMMAND_TIMEOUT` on the home (`Command::is_slow`).
+ * The same for slow commands (saving or reading a charger's hours may go
+ * through the internet). Matches `SLOW_COMMAND_TIMEOUT` on the home
+ * (`Command::is_slow`).
  */
 export const SLOW_COMMAND_TIMEOUT_MS = 20_000
 
 /** Commands the home gives longer (`Command::is_slow`). */
 export function isSlowCommand(command: Command): boolean {
-  return command.capability === 'ev_charger' && command.action === 'set_charging_schedule'
+  return (
+    command.capability === 'ev_charger' &&
+    (command.action === 'set_charging_schedule' || command.action === 'refresh_charging_schedule')
+  )
 }
 
 /**
@@ -72,6 +76,11 @@ export interface SendCommandOptions {
   confirmed?: boolean
   /** Name of the thing being controlled, for error messages. */
   label?: string
+  /**
+   * The control says itself when this fails (e.g. reading a charger's
+   * hours): the outcome still says why, but `onCommandFailed` is not told.
+   */
+  quiet?: boolean
 }
 
 export interface LiveClientOptions extends Pick<
@@ -94,6 +103,7 @@ interface InFlight {
   readonly command: Command
   readonly confirmed: boolean
   readonly label: string | undefined
+  readonly quiet: boolean
   readonly outcome: Promise<CommandOutcome>
   readonly resolve: (outcome: CommandOutcome) => void
   timer: ReturnType<typeof setTimeout> | null
@@ -204,10 +214,10 @@ export class LiveClient {
    * it failed. Failures are also reported to `onCommandFailed`.
    */
   sendCommand(target: Target, command: Command, options: SendCommandOptions = {}): Promise<CommandOutcome> {
-    const { confirmed = false, label } = options
+    const { confirmed = false, label, quiet = false } = options
     const data = this.#store.getState()
     if (!data.synced || this.socket.snapshot.status !== 'open') {
-      return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
+      return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }, quiet))
     }
     // The same command is already on its way (e.g. the same button on the
     // tile and in its dialog): never send it twice, share its outcome.
@@ -231,14 +241,14 @@ export class LiveClient {
     const message: ClientMessage = { type: 'command', request_id: requestId, target, command, confirmed }
     if (!this.socket.send(message)) {
       this.#update((current) => removePending(current, requestId))
-      return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
+      return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }, quiet))
     }
 
     let resolve: (outcome: CommandOutcome) => void = () => undefined
     const outcome = new Promise<CommandOutcome>((settle) => {
       resolve = settle
     })
-    const entry: InFlight = { target, command, confirmed, label, outcome, resolve, timer: null, answered: false }
+    const entry: InFlight = { target, command, confirmed, label, quiet, outcome, resolve, timer: null, answered: false }
     entry.timer = setTimeout(
       () => {
         this.#onTimeout(requestId)
@@ -265,8 +275,8 @@ export class LiveClient {
     if (next !== current) this.#store.setState(next, true)
   }
 
-  #fail(failure: CommandFailure): CommandOutcome {
-    this.#onCommandFailed(failure)
+  #fail(failure: CommandFailure, quiet = false): CommandOutcome {
+    if (!quiet) this.#onCommandFailed(failure)
     return { ok: false, ...failure }
   }
 
@@ -304,13 +314,16 @@ export class LiveClient {
     this.#finish(requestId)
     this.#update((data) => removePending(data, requestId))
     entry.resolve(
-      this.#fail({
-        target: entry.target,
-        command: entry.command,
-        label: entry.label,
-        reason: error.code,
-        ...(error.code === 'rejected' ? { rejectReason: error.reason } : {}),
-      }),
+      this.#fail(
+        {
+          target: entry.target,
+          command: entry.command,
+          label: entry.label,
+          reason: error.code,
+          ...(error.code === 'rejected' ? { rejectReason: error.reason } : {}),
+        },
+        entry.quiet,
+      ),
     )
   }
 
@@ -325,7 +338,10 @@ export class LiveClient {
     // it, that is good enough; otherwise revert and say so.
     entry.resolve(
       stillPending
-        ? this.#fail({ target: entry.target, command: entry.command, label: entry.label, reason: 'no_response' })
+        ? this.#fail(
+            { target: entry.target, command: entry.command, label: entry.label, reason: 'no_response' },
+            entry.quiet,
+          )
         : { ok: true },
     )
   }
