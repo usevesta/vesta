@@ -12,6 +12,9 @@
 //! truth for snapshots). Fan-out to clients goes through the lossy
 //! [`EventBus`](crate::EventBus), where lagging means "resync".
 
+use std::fmt;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -20,9 +23,45 @@ use crate::bus::BusEvent;
 use crate::capability::CapabilityState;
 use crate::command::Command;
 use crate::device::DeviceDescriptor;
+use crate::driver_state::{DriverState, MemoryState};
 use crate::event::{EndpointEvent, EventKind};
 use crate::id::{DeviceId, EndpointId, Target};
 use crate::message::{AvailabilityChange, StateChange};
+
+/// What the Hub hands a driver when it builds it for one device, besides
+/// the device's driver config.
+#[derive(Clone)]
+pub struct DriverContext {
+    state: Arc<dyn DriverState>,
+}
+
+impl DriverContext {
+    pub fn new(state: Arc<dyn DriverState>) -> Self {
+        Self { state }
+    }
+
+    /// With state kept in memory only (tests, tools).
+    pub fn in_memory() -> Self {
+        Self::new(Arc::new(MemoryState::new()))
+    }
+
+    /// The device's own durable state (see [`DriverState`]).
+    pub fn state(&self) -> &Arc<dyn DriverState> {
+        &self.state
+    }
+}
+
+impl Default for DriverContext {
+    fn default() -> Self {
+        Self::in_memory()
+    }
+}
+
+impl fmt::Debug for DriverContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DriverContext").finish_non_exhaustive()
+    }
+}
 
 /// One driver instance controls one device.
 #[async_trait]

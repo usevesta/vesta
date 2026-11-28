@@ -20,15 +20,21 @@
 //! - with the schedule on, it charges only within its charging hours (by
 //!   default 23:00–07:00 every day, off-peak), which `set_charging_schedule`
 //!   changes. The simulated week starts on a Monday.
+//! - its hours are reported like any other reading ([`SimHours::Reported`]),
+//!   or, like a charger that keeps them where only a slower path can read
+//!   them ([`SimHours::OnRequest`]), shown as last read or saved, with where
+//!   they came from and when, and read again on `refresh_charging_schedule`.
 
 use std::f64::consts::PI;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use vesta_core::{
     Capabilities, ChargingSchedule, ChargingScheduleFeatures, ChargingWindow, DriverError,
     Endpoint, EndpointId, EndpointType, EvChargeMode, EvChargerCapability, EvChargerCommand,
     EvChargerFeatures, EvChargerState, EvChargerStatus, EvChargerWaitReason, MeterRole,
-    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, TimeOfDay, Weekday,
+    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, ScheduleOrigin, ScheduleSource,
+    TimeOfDay, Timestamp, Weekday,
 };
 
 /// How often the charger and the meters report.
@@ -58,7 +64,70 @@ pub(crate) const SCHEDULE_FEATURES: ChargingScheduleFeatures = ChargingScheduleF
     editable: true,
     reports_windows: true,
     saving_needs_internet: false,
+    refreshable: false,
 };
+
+/// The same, for a charger whose hours are read and saved on request
+/// through a slower path (like the internet).
+pub(crate) const ON_REQUEST_FEATURES: ChargingScheduleFeatures = ChargingScheduleFeatures {
+    reports_windows: false,
+    saving_needs_internet: true,
+    refreshable: true,
+    ..SCHEDULE_FEATURES
+};
+
+/// How the simulated charger shows its hours (`hours` in the driver
+/// config).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimHours {
+    /// Reported like any other reading: always current.
+    #[default]
+    Reported,
+    /// Read on request (`refresh_charging_schedule`) and when saved; shown
+    /// with where they came from and when, and kept across restarts.
+    OnRequest,
+}
+
+/// The hours as last read or saved ([`SimHours::OnRequest`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KnownHours {
+    pub(crate) windows: Vec<ChargingWindow>,
+    pub(crate) origin: ScheduleOrigin,
+}
+
+/// [`KnownHours`] as kept in the device's state (no secrets: there are
+/// none in the simulator anyway).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StoredHours {
+    windows: Vec<ChargingWindow>,
+    source: ScheduleSource,
+    at: Timestamp,
+}
+
+impl From<&KnownHours> for StoredHours {
+    fn from(known: &KnownHours) -> Self {
+        Self {
+            windows: known.windows.clone(),
+            source: known.origin.source,
+            at: known.origin.at,
+        }
+    }
+}
+
+impl StoredHours {
+    /// The hours kept from before a restart, marked as such.
+    fn restored(self) -> KnownHours {
+        KnownHours {
+            windows: self.windows,
+            origin: ScheduleOrigin {
+                source: self.source,
+                at: self.at,
+                restored: true,
+            },
+        }
+    }
+}
 
 const SOLAR_PEAK_W: f64 = 4_200.0;
 pub(crate) const CONTRACTED_W: f64 = 5_750.0;
@@ -184,6 +253,9 @@ pub(crate) struct EvSim {
     locked: bool,
     schedule_enabled: bool,
     windows: Vec<ChargingWindow>,
+    hours: SimHours,
+    /// [`SimHours::OnRequest`]: the hours as last read or saved.
+    known: Option<KnownHours>,
     mode: EvChargeMode,
     setpoint_a: f64,
     // What is happening.
@@ -211,6 +283,8 @@ impl EvSim {
             locked: false,
             schedule_enabled: false,
             windows: default_windows(),
+            hours: SimHours::Reported,
+            known: None,
             mode: EvChargeMode::Manual,
             setpoint_a: 16.0,
             status: EvChargerStatus::Connected,
@@ -230,6 +304,46 @@ impl EvSim {
         sim.session_s = 1_920.0;
         sim.step(0.0);
         sim
+    }
+
+    /// Shows its hours as `hours` says.
+    #[must_use]
+    pub(crate) fn with_hours(mut self, hours: SimHours) -> Self {
+        self.hours = hours;
+        self
+    }
+
+    pub(crate) fn schedule_features(&self) -> ChargingScheduleFeatures {
+        match self.hours {
+            SimHours::Reported => SCHEDULE_FEATURES,
+            SimHours::OnRequest => ON_REQUEST_FEATURES,
+        }
+    }
+
+    /// [`SimHours::OnRequest`]: whether saving and reading the hours take
+    /// the slower path.
+    pub(crate) fn hours_on_request(&self) -> bool {
+        self.hours == SimHours::OnRequest
+    }
+
+    /// The hours to keep across a restart ([`SimHours::OnRequest`] only).
+    pub(crate) fn stored_hours(&self) -> Option<StoredHours> {
+        self.known.as_ref().map(StoredHours::from)
+    }
+
+    /// Picks up the hours kept from before a restart: shown as the last
+    /// known ones, and followed (the simulator forgets everything when it
+    /// stops, a real charger does not).
+    pub(crate) fn restore_hours(&mut self, stored: StoredHours) {
+        if !self.hours_on_request() {
+            return;
+        }
+        let known = stored.restored();
+        if SCHEDULE_FEATURES.check(&known.windows).is_ok() {
+            self.windows.clone_from(&known.windows);
+        }
+        self.known = Some(known);
+        self.step(0.0);
     }
 
     pub(crate) fn has_solar(&self) -> bool {
@@ -365,6 +479,21 @@ impl EvSim {
                     .map(ChargingWindow::normalized)
                     .collect();
                 self.schedule_enabled = enabled;
+                if self.hours_on_request() {
+                    self.known = Some(KnownHours {
+                        windows: self.windows.clone(),
+                        origin: ScheduleOrigin::now(ScheduleSource::Saved),
+                    });
+                }
+            }
+            EvChargerCommand::RefreshChargingSchedule => {
+                if !self.hours_on_request() {
+                    return Err(DriverError::Unsupported);
+                }
+                self.known = Some(KnownHours {
+                    windows: self.windows.clone(),
+                    origin: ScheduleOrigin::now(ScheduleSource::Charger),
+                });
             }
         }
         self.step(0.0);
@@ -390,10 +519,19 @@ impl EvSim {
             mode: Some(self.mode),
             locked: Some(self.locked),
             schedule_enabled: Some(self.schedule_enabled),
-            charging_schedule: Some(ChargingSchedule {
-                enabled: self.schedule_enabled,
-                windows: self.windows.clone(),
-            }),
+            charging_schedule: match self.hours {
+                SimHours::Reported => Some(ChargingSchedule {
+                    enabled: self.schedule_enabled,
+                    windows: self.windows.clone(),
+                    origin: None,
+                }),
+                // Only what was last read or saved, and since when.
+                SimHours::OnRequest => self.known.as_ref().map(|known| ChargingSchedule {
+                    enabled: self.schedule_enabled,
+                    windows: known.windows.clone(),
+                    origin: Some(known.origin),
+                }),
+            },
         }
     }
 
@@ -476,7 +614,7 @@ pub(crate) fn endpoints(sim: &EvSim) -> Result<Vec<Endpoint>, DriverError> {
                         adjustable_current: true,
                         lock: true,
                         schedule: true,
-                        charging_schedule: Some(SCHEDULE_FEATURES),
+                        charging_schedule: Some(sim.schedule_features()),
                     },
                     state: None,
                 }),

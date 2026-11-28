@@ -2,4 +2,4 @@
 import type { ChargingWindow } from "./ChargingWindow";
 import type { EvChargeMode } from "./EvChargeMode";
 
-export type EvChargerCommand = { "action": "pause" } | { "action": "resume" } | { "action": "set_current", amps: number, } | { "action": "set_mode", mode: EvChargeMode, } | { "action": "lock" } | { "action": "unlock" } | { "action": "set_schedule", enabled: boolean, } | { "action": "set_charging_schedule", enabled: boolean, windows: Array<ChargingWindow>, };
+export type EvChargerCommand = { "action": "pause" } | { "action": "resume" } | { "action": "set_current", amps: number, } | { "action": "set_mode", mode: EvChargeMode, } | { "action": "lock" } | { "action": "unlock" } | { "action": "set_schedule", enabled: boolean, } | { "action": "set_charging_schedule", enabled: boolean, windows: Array<ChargingWindow>, } | { "action": "refresh_charging_schedule" };

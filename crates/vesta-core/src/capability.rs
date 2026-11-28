@@ -10,6 +10,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::Timestamp;
 use crate::command::{
     Command, CoverCommand, EvChargerCommand, FanCommand, LockCommand, RobotVacuumCommand,
 };
@@ -537,13 +538,19 @@ pub struct ChargingScheduleFeatures {
     pub overnight: bool,
     /// `set_charging_schedule` works: the hours can be changed from VESTA.
     pub editable: bool,
-    /// The charger reports its hours. When `false`, `state.charging_schedule`
-    /// holds the hours last saved from VESTA (they may have been changed
-    /// elsewhere since) and is omitted until then.
+    /// The charger reports its hours by itself, so they are always current.
+    /// When `false`, `state.charging_schedule` holds the last hours VESTA
+    /// knows (read on request or saved from VESTA; see its `origin`), which
+    /// may have been changed elsewhere since, and is omitted until then.
     pub reports_windows: bool,
     /// Saving the hours needs the home's internet connection. Switching the
     /// schedule on and off (`set_schedule`) and following it do not.
     pub saving_needs_internet: bool,
+    /// `refresh_charging_schedule` works: VESTA can read the hours from the
+    /// charger, once, when someone asks (e.g. opens the hours editor). Only
+    /// for chargers that do not report them by themselves; it may need the
+    /// internet like saving does.
+    pub refreshable: bool,
 }
 
 impl ChargingScheduleFeatures {
@@ -656,12 +663,59 @@ impl ChargingWindow {
 }
 
 /// A charger's schedule of charging hours: while `enabled`, it charges
-/// only within its `windows`.
+/// only within its `windows`. No windows: no hours are set on the charger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
 pub struct ChargingSchedule {
     /// Same as `state.schedule_enabled`.
     pub enabled: bool,
     pub windows: Vec<ChargingWindow>,
+    /// Where `windows` come from and when, for a charger that does not
+    /// report its hours by itself (`features.charging_schedule.reports_windows`
+    /// is `false`). Omitted when it does: they are always current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ScheduleOrigin>,
+}
+
+/// Where the charging hours VESTA shows come from, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ScheduleOrigin {
+    pub source: ScheduleSource,
+    /// When they were read from the charger or saved from VESTA (RFC 3339).
+    pub at: Timestamp,
+    /// Kept from before the Hub last started: nothing has been read or
+    /// saved since, so they are the last known hours.
+    pub restored: bool,
+}
+
+impl ScheduleOrigin {
+    /// Read from the charger, or saved from VESTA, just now.
+    pub fn now(source: ScheduleSource) -> Self {
+        Self {
+            source,
+            at: Timestamp::now(),
+            restored: false,
+        }
+    }
+
+    /// The same origin, kept from before the Hub started.
+    #[must_use]
+    pub const fn restored(self) -> Self {
+        Self {
+            restored: true,
+            ..self
+        }
+    }
+}
+
+/// How VESTA learned a charger's hours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleSource {
+    /// Read from the charger (`refresh_charging_schedule`).
+    Charger,
+    /// Saved from VESTA (`set_charging_schedule`), and taken by the charger.
+    Saved,
 }
 
 impl EvChargerFeatures {
@@ -957,6 +1011,9 @@ impl Capabilities {
                             schedule.editable && schedule.check(windows).is_ok()
                         })
                     }
+                    EvChargerCommand::RefreshChargingSchedule => features
+                        .charging_schedule
+                        .is_some_and(|schedule| schedule.refreshable),
                 }
             }),
             Command::RobotVacuum(cmd) => self.robot_vacuum.as_ref().is_some_and(|cap| {
@@ -1320,6 +1377,7 @@ mod tests {
             editable: true,
             reports_windows: false,
             saving_needs_internet: true,
+            refreshable: true,
         }
     }
 
@@ -1400,6 +1458,62 @@ mod tests {
         assert!(good.is_slow());
         assert!(!good.is_sensitive(crate::EndpointType::EvCharger));
         assert!(!Command::EvCharger(EvChargerCommand::SetSchedule { enabled: true }).is_slow());
+    }
+
+    #[test]
+    fn charging_hours_are_read_only_when_the_charger_can() {
+        let caps = |schedule: Option<ChargingScheduleFeatures>| Capabilities {
+            ev_charger: Some(EvChargerCapability {
+                features: EvChargerFeatures {
+                    charging_schedule: schedule,
+                    ..charger_features()
+                },
+                state: None,
+            }),
+            ..Capabilities::default()
+        };
+        let refresh = Command::EvCharger(EvChargerCommand::RefreshChargingSchedule);
+        assert!(caps(Some(schedule_features())).supports(&refresh));
+        assert!(!caps(None).supports(&refresh));
+        let reported = ChargingScheduleFeatures {
+            reports_windows: true,
+            refreshable: false,
+            ..schedule_features()
+        };
+        assert!(!caps(Some(reported)).supports(&refresh));
+        // It may go through the internet; it changes nothing.
+        assert!(refresh.is_slow());
+        assert!(!refresh.is_sensitive(crate::EndpointType::EvCharger));
+        assert_eq!(
+            serde_json::to_value(&refresh).unwrap(),
+            serde_json::json!({ "capability": "ev_charger", "action": "refresh_charging_schedule" })
+        );
+    }
+
+    #[test]
+    fn charging_hours_say_where_they_come_from() {
+        let schedule: ChargingSchedule = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "windows": [{ "start": "22:00", "end": "06:00", "days": ["monday"] }],
+            "origin": { "source": "charger", "at": "2026-11-28T09:30:00Z", "restored": true }
+        }))
+        .unwrap();
+        let origin = schedule.origin.unwrap();
+        assert_eq!(origin.source, ScheduleSource::Charger);
+        assert!(origin.restored);
+        assert_eq!(origin.at.to_string(), "2026-11-28T09:30:00Z");
+        // A charger that reports its hours by itself has no origin.
+        let live: ChargingSchedule =
+            serde_json::from_value(serde_json::json!({ "enabled": false, "windows": [] })).unwrap();
+        assert_eq!(live.origin, None);
+        assert_eq!(
+            serde_json::to_value(&live).unwrap(),
+            serde_json::json!({ "enabled": false, "windows": [] })
+        );
+        let saved = ScheduleOrigin::now(ScheduleSource::Saved);
+        assert!(!saved.restored);
+        assert!(saved.restored().restored);
+        assert_eq!(saved.restored().at, saved.at);
     }
 
     #[test]

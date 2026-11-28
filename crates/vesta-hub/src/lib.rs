@@ -39,6 +39,7 @@ mod auth;
 mod dashboard;
 mod http;
 mod runtime;
+mod state;
 mod ws;
 
 pub use assets::{UiAsset, UiAssets, UiFiles, mime_for};
@@ -48,6 +49,7 @@ pub use auth::{
 };
 use dashboard::Dashboards;
 pub use dashboard::{DashboardStore, JsonFileStore, MemoryStore};
+pub use state::{FileState, STATE_SCHEMA_VERSION, StateStorage};
 
 use runtime::Runtime;
 
@@ -72,6 +74,9 @@ pub struct HubOptions {
     pub allowed_origins: Vec<String>,
     /// The wall-panel UI, served on the API's origin.
     pub ui: Option<Arc<dyn UiAssets>>,
+    /// Where drivers keep their per-device state between restarts (e.g. a
+    /// charger's last known hours). In memory unless told otherwise.
+    pub driver_state: StateStorage,
 }
 
 impl HubOptions {
@@ -87,6 +92,7 @@ impl Default for HubOptions {
             auth: ApiAuth::default(),
             allowed_origins: Vec::new(),
             ui: None,
+            driver_state: StateStorage::Memory,
         }
     }
 }

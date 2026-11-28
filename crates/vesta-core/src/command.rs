@@ -140,6 +140,13 @@ pub enum EvChargerCommand {
         enabled: bool,
         windows: Vec<ChargingWindow>,
     },
+    /// Reads the charging hours from the charger once, so the screen shows
+    /// the ones set on it (e.g. in its own app). Sent when someone asks
+    /// (opening the hours editor), never on a timer; the charger may answer
+    /// it less often than asked. Needs
+    /// `features.charging_schedule.refreshable`; may need the internet, so
+    /// it is slow ([`Command::is_slow`]).
+    RefreshChargingSchedule,
 }
 
 impl EvChargerCommand {
@@ -149,6 +156,7 @@ impl EvChargerCommand {
             Self::SetChargingSchedule { enabled, windows } => Some(ChargingSchedule {
                 enabled: *enabled,
                 windows: windows.clone(),
+                origin: None,
             }),
             _ => None,
         }
@@ -209,7 +217,8 @@ impl Command {
                 | EvChargerCommand::SetMode { .. }
                 | EvChargerCommand::Lock
                 | EvChargerCommand::SetSchedule { .. }
-                | EvChargerCommand::SetChargingSchedule { .. },
+                | EvChargerCommand::SetChargingSchedule { .. }
+                | EvChargerCommand::RefreshChargingSchedule,
             ) => false,
             Self::OnOff(_)
             | Self::Level(_)
@@ -222,11 +231,15 @@ impl Command {
 
     /// Whether this command may take longer than the usual few seconds
     /// (the Hub and the screens wait [`SLOW_COMMAND_TIMEOUT`] instead of
-    /// 5 s): saving a charger's hours may go through the internet.
+    /// 5 s): saving or reading a charger's hours may go through the
+    /// internet.
     pub const fn is_slow(&self) -> bool {
         matches!(
             self,
-            Self::EvCharger(EvChargerCommand::SetChargingSchedule { .. })
+            Self::EvCharger(
+                EvChargerCommand::SetChargingSchedule { .. }
+                    | EvChargerCommand::RefreshChargingSchedule
+            )
         )
     }
 }

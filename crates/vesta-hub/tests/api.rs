@@ -694,7 +694,7 @@ async fn offline_devices_reject_commands() {
     let home = r#"{ "schema_version": 1, "home_name": "Test", "devices": [
         { "id": "porch_switch", "name": "Porch", "driver": "unreachable" } ] }"#;
     let mut registry = Registry::empty();
-    registry.register("unreachable", |_| {
+    registry.register("unreachable", |_, _| {
         Ok(Arc::new(Unreachable) as Arc<dyn DeviceDriver>)
     });
     let addr = start(home, registry, HubOptions::default()).await;
@@ -756,7 +756,7 @@ async fn api_never_exposes_driver_names_or_config() {
         { "id": "living_room_light", "name": "Living Room Light", "driver": "sim",
           "config": { "model": "light", "latency_ms": 0 } } ] }"#;
     let mut registry = Registry::builtin();
-    registry.register("example_cloud_bridge", |_| {
+    registry.register("example_cloud_bridge", |_, _| {
         Ok(Arc::new(Leaky) as Arc<dyn DeviceDriver>)
     });
     let hub = hub(home, registry, HubOptions::default()).await;
@@ -806,7 +806,7 @@ async fn lagging_clients_get_a_fresh_snapshot() {
     let poke = Arc::new(Notify::new());
     let mut registry = Registry::empty();
     let driver_poke = Arc::clone(&poke);
-    registry.register("burst", move |_| {
+    registry.register("burst", move |_, _| {
         Ok(Arc::new(Burst(Arc::clone(&driver_poke))) as Arc<dyn DeviceDriver>)
     });
     let options = HubOptions {

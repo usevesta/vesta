@@ -1,8 +1,9 @@
-//! V2C's cloud API, used for one thing only: storing charging hours in the
-//! charger when the household saves them. The charger keeps them and
-//! follows them by itself, with or without internet (AGENTS.md rule 7).
-//! Reading, every other control, and switching the hours on and off stay
-//! on the local API.
+//! V2C's cloud API, used for one thing only: the charger's charging hours.
+//! They are stored in the charger when the household saves them, and read
+//! from it when someone opens the hours editor (the local API has neither).
+//! The charger keeps them and follows them by itself, with or without
+//! internet (AGENTS.md rule 7). Every other reading and control, and
+//! switching the hours on and off, stay on the local API.
 //!
 //! Facts and sources are in this crate's `README.md` ("Charging hours").
 //!
@@ -33,7 +34,9 @@ pub(crate) enum CloudRequest {
     /// `POST /device/timer?deviceId=…&timerId=…` with
     /// `{"timeStart":"HH:MM","timeEnd":"HH:MM","daysOfWeek":"1234567"}`.
     Timer { slot: u8, window: ChargingWindow },
-    /// `GET /device/reported?deviceId=…`: read back after saving.
+    /// `GET /device/reported?deviceId=…`: the charger's last reported
+    /// state, for its timers. Read back after saving, and when someone asks
+    /// to see the hours.
     Reported,
 }
 
@@ -104,9 +107,15 @@ pub(crate) enum ReportedTimer {
 /// The charger's timers from `/device/reported` (fields `hourstart_00`,
 /// `minutestart_00`, `hourend_00`, `minuteend_00`, `daysofweek_00`, and
 /// `_01`; days "8" = not set). `None` when the answer does not say: the
-/// fields are not documented and may be missing.
+/// fields are not documented and may be missing. Nothing else in the
+/// answer is used.
 pub(crate) fn reported_timers(body: &[u8]) -> Option<Vec<ReportedTimer>> {
     let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    // Some answers carry the JSON object as text inside a JSON string.
+    let value = match value {
+        serde_json::Value::String(text) => serde_json::from_str(&text).ok()?,
+        other => other,
+    };
     // Some answers wrap the object in a list or a `data` field.
     let object = match &value {
         serde_json::Value::Array(items) => items.first()?,
@@ -334,6 +343,12 @@ mod tests {
         let listed = json!([{ "daysofweek_00": "8", "daysofweek_01": "8" }]);
         assert_eq!(
             reported_timers(listed.to_string().as_bytes()),
+            Some(vec![ReportedTimer::NotSet, ReportedTimer::NotSet])
+        );
+        // The object as text inside a JSON string.
+        let text = json!(json!({ "daysofweek_00": "8", "daysofweek_01": "8" }).to_string());
+        assert_eq!(
+            reported_timers(text.to_string().as_bytes()),
             Some(vec![ReportedTimer::NotSet, ReportedTimer::NotSet])
         );
     }

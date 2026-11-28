@@ -30,6 +30,12 @@
 //!   `occupancy.detected` and `doorbell.pressed`.
 //! - `solar` (`ev_charger` only, default `true`): the home has solar panels.
 //! - `battery` (`ev_charger` only, default `false`): the home has a battery.
+//! - `hours` (`ev_charger` only, default `"reported"`): `"on_request"`
+//!   simulates a charger that does not report its charging hours: they show
+//!   as last read (`refresh_charging_schedule`) or saved, with where they
+//!   came from and when, are kept in the device's state across restarts,
+//!   and reading or saving them takes `latency_ms` × 6 (like going through
+//!   the internet).
 //! - `read_only` (`smart_plug`, `robot_vacuum`, default `false`): set up for
 //!   monitoring only; no controls, every command refused.
 //! - `load_w` (`smart_plug` only, default 60): what the plugged-in appliance
@@ -53,15 +59,21 @@ use vesta_core::{
     Capabilities, CapabilityKind, CapabilityState, ColorCommand, ColorTemperatureCapability,
     ColorTemperatureCommand, ColorTemperatureFeatures, ColorTemperatureState, Command,
     CoverCapability, CoverCommand, CoverFeatures, CoverKind, CoverMotion, CoverState,
-    DeviceDescriptor, DeviceDriver, DoorbellCapability, DriverError, Endpoint, EndpointId,
-    EndpointType, EventKind, EventSink, FanCapability, FanCommand, FanDirection, FanFeatures,
-    FanState, LevelCapability, LevelCommand, LevelState, OccupancyCapability, OccupancyState,
-    OnOffCapability, OnOffCommand, OnOffState, Percent, TriggerCapability, TriggerCommand,
-    async_trait,
+    DeviceDescriptor, DeviceDriver, DoorbellCapability, DriverContext, DriverError, Endpoint,
+    EndpointId, EndpointType, EvChargerCommand, EventKind, EventSink, FanCapability, FanCommand,
+    FanDirection, FanFeatures, FanState, LevelCapability, LevelCommand, LevelState,
+    OccupancyCapability, OccupancyState, OnOffCapability, OnOffCommand, OnOffState, Percent,
+    StateKey, TriggerCapability, TriggerCommand, async_trait,
 };
 
 use crate::appliance::{Appliance, PlugSim, RobotSim};
-use crate::ev::EvSim;
+pub use crate::ev::SimHours;
+use crate::ev::{EvSim, StoredHours};
+
+/// Where an `on_request` charger keeps its last known hours.
+const HOURS_KEY: &str = "charging_schedule";
+/// Reading or saving `on_request` hours takes this many times `latency_ms`.
+const SLOW_PATH_FACTOR: u64 = 6;
 
 /// Default simulated command latency.
 pub const DEFAULT_LATENCY_MS: u64 = 150;
@@ -113,6 +125,10 @@ pub struct SimConfig {
     /// `ev_charger` only: the home has a battery (default `false`).
     #[serde(default)]
     pub battery: Option<bool>,
+    /// `ev_charger` only: how it shows its charging hours (default
+    /// reported).
+    #[serde(default)]
+    pub hours: Option<SimHours>,
     /// `smart_plug` and `robot_vacuum` only: monitoring only.
     #[serde(default)]
     pub read_only: Option<bool>,
@@ -136,6 +152,7 @@ impl SimConfig {
             seed: None,
             solar: None,
             battery: None,
+            hours: None,
             read_only: None,
             load_w: None,
         }
@@ -157,8 +174,10 @@ impl SimConfig {
         if self.latency_ms > MAX_LATENCY_MS {
             return invalid("latency_ms must be at most 60000");
         }
-        if (self.solar.is_some() || self.battery.is_some()) && self.model != SimModel::EvCharger {
-            return invalid("solar and battery are only valid for the ev_charger model");
+        if (self.solar.is_some() || self.battery.is_some() || self.hours.is_some())
+            && self.model != SimModel::EvCharger
+        {
+            return invalid("solar, battery and hours are only valid for the ev_charger model");
         }
         if self.read_only.is_some()
             && !matches!(self.model, SimModel::SmartPlug | SimModel::RobotVacuum)
@@ -194,6 +213,7 @@ pub struct SimDriver {
     /// publish out of order.
     changed_tx: mpsc::Sender<Changed>,
     changed_rx: tokio::sync::Mutex<mpsc::Receiver<Changed>>,
+    context: DriverContext,
 }
 
 impl std::fmt::Debug for SimDriver {
@@ -519,15 +539,36 @@ impl SimModel {
     }
 }
 
+fn hours_key() -> Result<StateKey, DriverError> {
+    StateKey::new(HOURS_KEY).map_err(DriverError::other)
+}
+
 impl SimDriver {
+    /// A driver whose state lives in memory only.
     pub fn new(config: SimConfig) -> Result<Self, DriverError> {
+        Self::with_context(config, DriverContext::in_memory())
+    }
+
+    pub fn with_context(config: SimConfig, context: DriverContext) -> Result<Self, DriverError> {
         config.validate()?;
-        let ev = (config.model == SimModel::EvCharger).then(|| {
+        let mut ev = (config.model == SimModel::EvCharger).then(|| {
             EvSim::new(
                 config.solar.unwrap_or(true),
                 config.battery.unwrap_or(false),
             )
+            .with_hours(config.hours.unwrap_or_default())
         });
+        if let Some(ev) = ev.as_mut().filter(|ev| ev.hours_on_request()) {
+            // The last known hours, from before a restart.
+            if let Some(stored) = context.state().get(&hours_key()?) {
+                match serde_json::from_value::<StoredHours>(stored) {
+                    Ok(stored) => ev.restore_hours(stored),
+                    Err(error) => {
+                        tracing::warn!(%error, "ignored the kept charging hours: unreadable");
+                    }
+                }
+            }
+        }
         let appliance = match config.model {
             SimModel::SmartPlug => Some(Appliance::Plug(PlugSim::new(
                 config.load_w.unwrap_or(appliance::DEFAULT_LOAD_W),
@@ -559,12 +600,50 @@ impl SimDriver {
             rng: Mutex::new(rng),
             changed_tx,
             changed_rx: tokio::sync::Mutex::new(changed_rx),
+            context,
         })
     }
 
     /// Builds a driver from the device's driver config JSON.
-    pub fn from_config(value: &serde_json::Value) -> Result<Self, DriverError> {
-        Self::new(SimConfig::from_value(value)?)
+    pub fn from_config(
+        value: &serde_json::Value,
+        context: &DriverContext,
+    ) -> Result<Self, DriverError> {
+        Self::with_context(SimConfig::from_value(value)?, context.clone())
+    }
+
+    /// Whether `cmd` takes the charger's slower path (reading or saving
+    /// `on_request` hours).
+    fn takes_slow_path(&self, cmd: &Command) -> bool {
+        matches!(
+            cmd,
+            Command::EvCharger(
+                EvChargerCommand::SetChargingSchedule { .. }
+                    | EvChargerCommand::RefreshChargingSchedule
+            )
+        ) && self
+            .lock_state()
+            .ev
+            .as_ref()
+            .is_some_and(EvSim::hours_on_request)
+    }
+
+    /// Keeps an `on_request` charger's last known hours for the next start.
+    /// A failure is logged: the hours stay on screen, only a restart would
+    /// forget them.
+    async fn keep_hours(&self) {
+        let stored = self.lock_state().ev.as_ref().and_then(EvSim::stored_hours);
+        let Some(stored) = stored else {
+            return;
+        };
+        let kept = match (hours_key(), serde_json::to_value(stored)) {
+            (Ok(key), Ok(value)) => self.context.state().set(&key, value).await,
+            (Err(error), _) => Err(error),
+            (_, Err(error)) => Err(DriverError::other(error)),
+        };
+        if let Err(error) = kept {
+            tracing::warn!(%error, "could not keep the charging hours for the next start");
+        }
     }
 
     pub fn config(&self) -> &SimConfig {
@@ -920,13 +999,23 @@ impl DeviceDriver for SimDriver {
 
     async fn execute(&self, endpoint: &EndpointId, cmd: Command) -> Result<(), DriverError> {
         self.check(endpoint, &cmd)?;
-        if self.config.latency_ms > 0 {
-            sleep(Duration::from_millis(self.config.latency_ms)).await;
+        let slow = self.takes_slow_path(&cmd);
+        let latency = if slow {
+            self.config.latency_ms.saturating_mul(SLOW_PATH_FACTOR)
+        } else {
+            self.config.latency_ms
+        };
+        if latency > 0 {
+            sleep(Duration::from_millis(latency)).await;
         }
         if self.should_fail() {
             return Err(DriverError::Protocol("simulated failure".to_owned()));
         }
-        for (endpoint, kind) in self.apply(endpoint, cmd)? {
+        let changed = self.apply(endpoint, cmd)?;
+        if slow {
+            self.keep_hours().await;
+        }
+        for (endpoint, kind) in changed {
             self.changed_tx
                 .send(Changed { endpoint, kind })
                 .await

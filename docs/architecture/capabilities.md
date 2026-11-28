@@ -100,7 +100,8 @@ function. The grid meter carries the contracted power as `limit_w`.
               "overnight": true,
               "editable": true,
               "reports_windows": false,
-              "saving_needs_internet": true
+              "saving_needs_internet": true,
+              "refreshable": true
             }
           },
           "state": {
@@ -121,7 +122,8 @@ function. The grid meter carries the contracted power as `limit_w`.
               "windows": [
                 { "start": "22:00", "end": "06:00", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"] },
                 { "start": "00:00", "end": "08:00", "days": ["saturday", "sunday"] }
-              ]
+              ],
+              "origin": { "source": "charger", "at": "2026-11-28T09:30:00Z", "restored": false }
             }
           }
         }

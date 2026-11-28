@@ -13,11 +13,13 @@
 //!
 //! Commands map to the few writes in [`api::Write`]; the charger's safety
 //! and installation settings (contracted power, dynamic power control,
-//! current limits, phases) are never written (AGENTS.md rule 7). Saving
-//! charging hours is the one thing the local API cannot do: with a
-//! `cloud_api_key`, they are stored in the charger through V2C's cloud
-//! ([`cloud::CloudRequest`], also a closed list), only when someone saves
-//! them. See `README.md` for the API facts and their sources.
+//! current limits, phases) are never written (AGENTS.md rule 7). Charging
+//! hours are the one thing the local API cannot read or write: with a
+//! `cloud_api_key`, they are stored in the charger through V2C's cloud when
+//! someone saves them, and read from it when someone opens the hours editor
+//! (at most once per 30 s; [`cloud::CloudRequest`], also a closed list). The
+//! last known hours are kept in the device's state, so a restart does not
+//! forget them. See `README.md` for the API facts and their sources.
 //!
 //! Config (`devices[].config` in `config.json`):
 //!
@@ -38,13 +40,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use vesta_core::{
     Capabilities, CapabilityState, ChargingSchedule, ChargingScheduleFeatures, ChargingWindow,
-    Command, DeviceDescriptor, DeviceDriver, DriverError, Endpoint, EndpointId, EndpointType,
-    EvChargerCapability, EvChargerCommand, EvChargerFeatures, EventSink, MeterRole,
-    PowerMeterCapability, PowerMeterFeatures, async_trait,
+    Command, DeviceDescriptor, DeviceDriver, DriverContext, DriverError, Endpoint, EndpointId,
+    EndpointType, EvChargerCapability, EvChargerCommand, EvChargerFeatures, EventSink, MeterRole,
+    PowerMeterCapability, PowerMeterFeatures, ScheduleOrigin, ScheduleSource, StateKey, Timestamp,
+    async_trait,
 };
 
 use crate::api::{HW_MAX_A, HW_MIN_A, Reading, SWITCHABLE_MODES, SolarMode, Write, intensity_for};
@@ -64,7 +68,7 @@ const BATTERY: &str = "battery";
 
 /// The charger's charging hours, with a cloud key: two timers (any days,
 /// past midnight too), stored in the charger. It does not report them
-/// locally, and saving needs the internet.
+/// locally: saving them and reading them (on request) need the internet.
 const SCHEDULE_FEATURES: ChargingScheduleFeatures = ChargingScheduleFeatures {
     max_windows: TIMER_IDS.len() as u8,
     weekdays: true,
@@ -72,7 +76,59 @@ const SCHEDULE_FEATURES: ChargingScheduleFeatures = ChargingScheduleFeatures {
     editable: true,
     reports_windows: false,
     saving_needs_internet: true,
+    refreshable: true,
 };
+
+/// Where the last known charging hours are kept in the device's state.
+const SCHEDULE_KEY: &str = "charging_schedule";
+
+/// The last known charging hours, as kept in the device's state. Device
+/// data only: never the cloud key, the charger's ID or its address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredSchedule {
+    windows: Vec<ChargingWindow>,
+    source: ScheduleSource,
+    at: Timestamp,
+}
+
+/// The charging hours VESTA last read from the charger or saved to it (the
+/// charger does not report them locally).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KnownSchedule {
+    windows: Vec<ChargingWindow>,
+    origin: ScheduleOrigin,
+}
+
+impl KnownSchedule {
+    fn stored(&self) -> StoredSchedule {
+        StoredSchedule {
+            windows: self.windows.clone(),
+            source: self.origin.source,
+            at: self.origin.at,
+        }
+    }
+
+    /// Kept from before the Hub started: shown as the last known hours.
+    fn restored(stored: StoredSchedule) -> Self {
+        Self {
+            windows: stored.windows,
+            origin: ScheduleOrigin {
+                source: stored.source,
+                at: stored.at,
+                restored: true,
+            },
+        }
+    }
+}
+
+/// The cloud, one request at a time (a read never races a save), and when
+/// the hours were last read from it.
+#[derive(Debug, Default)]
+struct CloudUse {
+    /// When the hours were last read (on request or after a save), and
+    /// whether that worked.
+    last_read: Option<(Instant, bool)>,
+}
 
 /// How the driver paces itself. Tests shorten everything.
 #[derive(Debug, Clone, Copy)]
@@ -97,10 +153,13 @@ struct Timing {
     command_budget: Duration,
     /// Each request to the cloud.
     cloud_timeout: Duration,
-    /// Saving charging hours, cloud, local write and fresh reading
-    /// included (the Hub gives slow commands 20 s). The cloud gets this
-    /// minus `command_budget`.
+    /// Saving or reading charging hours, cloud, local write and fresh
+    /// reading included (the Hub gives slow commands 20 s). The cloud gets
+    /// this minus `command_budget`.
     schedule_budget: Duration,
+    /// The hours are read from the cloud at most this often; asking again
+    /// sooner answers with the last read (V2C allows 1000 calls a day).
+    read_every: Duration,
 }
 
 impl Timing {
@@ -117,6 +176,7 @@ impl Timing {
             command_budget: Duration::from_millis(4_500),
             cloud_timeout: Duration::from_secs(5),
             schedule_budget: Duration::from_secs(18),
+            read_every: Duration::from_secs(30),
         }
     }
 }
@@ -154,11 +214,14 @@ pub struct V2cDriver {
     writes: tokio::sync::Mutex<Option<Instant>>,
     refresh_tx: mpsc::Sender<Refresh>,
     refresh_rx: tokio::sync::Mutex<mpsc::Receiver<Refresh>>,
-    /// V2C's cloud, with a `cloud_api_key`: only to save charging hours.
+    /// V2C's cloud, with a `cloud_api_key`: only to save and read
+    /// charging hours.
     cloud: Option<Cloud>,
-    /// The charging hours last saved from VESTA (the charger does not
-    /// report them locally). In memory only: unknown again after a restart.
-    saved_windows: Mutex<Option<Vec<ChargingWindow>>>,
+    cloud_use: tokio::sync::Mutex<CloudUse>,
+    /// The charging hours last read or saved (the charger does not report
+    /// them locally); kept in the device's state across restarts.
+    known_schedule: Mutex<Option<KnownSchedule>>,
+    context: DriverContext,
 }
 
 impl std::fmt::Debug for V2cDriver {
@@ -178,6 +241,41 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn endpoint_id(raw: &str) -> Result<EndpointId, DriverError> {
     EndpointId::new(raw).map_err(DriverError::other)
+}
+
+/// Windows in their first order, each once.
+fn unique(windows: Vec<ChargingWindow>) -> Vec<ChargingWindow> {
+    let mut unique: Vec<ChargingWindow> = Vec::new();
+    for window in windows {
+        if !unique.contains(&window) {
+            unique.push(window);
+        }
+    }
+    unique
+}
+
+/// The last known hours from the device's state. Unreadable ones are
+/// logged and ignored: the hours are then unknown until read or saved.
+fn restore_schedule(context: &DriverContext) -> Option<KnownSchedule> {
+    let key = StateKey::new(SCHEDULE_KEY).ok()?;
+    let value = context.state().get(&key)?;
+    match serde_json::from_value::<StoredSchedule>(value) {
+        Ok(stored) if stored.windows.len() <= TIMER_IDS.len() => {
+            tracing::info!(
+                windows = stored.windows.len(),
+                "showing the last known charging hours until they are read again"
+            );
+            Some(KnownSchedule::restored(stored))
+        }
+        Ok(_) => {
+            tracing::warn!("ignored the kept charging hours: more windows than the charger holds");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, "ignored the kept charging hours: unreadable");
+            None
+        }
+    }
 }
 
 fn meter(
@@ -205,15 +303,19 @@ fn meter(
 }
 
 impl V2cDriver {
-    /// Builds a driver from the device's driver config JSON.
-    pub fn from_config(value: &serde_json::Value) -> Result<Self, DriverError> {
-        Self::new(V2cConfig::from_value(value)?)
+    /// Builds a driver from the device's driver config JSON, with what the
+    /// Hub hands it (its durable state).
+    pub fn from_config(
+        value: &serde_json::Value,
+        context: &DriverContext,
+    ) -> Result<Self, DriverError> {
+        Self::new(V2cConfig::from_value(value)?, context.clone())
     }
 
-    pub fn new(config: V2cConfig) -> Result<Self, DriverError> {
+    pub fn new(config: V2cConfig, context: DriverContext) -> Result<Self, DriverError> {
         config.validate()?;
         let timing = Timing::new(&config);
-        Self::build(config, timing, Scan::Network, CLOUD_BASE)
+        Self::build(config, timing, Scan::Network, CLOUD_BASE, context)
     }
 
     fn build(
@@ -221,6 +323,7 @@ impl V2cDriver {
         timing: Timing,
         scan: Scan,
         cloud_base: &str,
+        context: DriverContext,
     ) -> Result<Self, DriverError> {
         let address = config.address()?;
         let http = Http::new(timing.request_timeout)?;
@@ -229,6 +332,13 @@ impl V2cDriver {
             .map(|key| Cloud::new(cloud_base, key, timing.cloud_timeout))
             .transpose()?;
         let (refresh_tx, refresh_rx) = mpsc::channel(8);
+        // The last known hours, only when they can be shown (a cloud key,
+        // and not monitoring only).
+        let known_schedule = if cloud.is_some() && !config.read_only {
+            restore_schedule(&context)
+        } else {
+            None
+        };
         Ok(Self {
             known_id: Mutex::new(config.charger_id.clone()),
             ours: AtomicBool::new(false),
@@ -242,7 +352,9 @@ impl V2cDriver {
             refresh_tx,
             refresh_rx: tokio::sync::Mutex::new(refresh_rx),
             cloud,
-            saved_windows: Mutex::new(None),
+            cloud_use: tokio::sync::Mutex::new(CloudUse::default()),
+            known_schedule: Mutex::new(known_schedule),
+            context,
         })
     }
 
@@ -323,8 +435,9 @@ impl V2cDriver {
             EvChargerCommand::Lock => Write::Locked(true),
             EvChargerCommand::Unlock => Write::Locked(false),
             EvChargerCommand::SetSchedule { enabled } => Write::Timer(enabled),
-            // Not a single local write: see `save_schedule`.
-            EvChargerCommand::SetChargingSchedule { .. } => return Err(DriverError::Unsupported),
+            // Not local writes: see `save_schedule` and `read_schedule`.
+            EvChargerCommand::SetChargingSchedule { .. }
+            | EvChargerCommand::RefreshChargingSchedule => return Err(DriverError::Unsupported),
             EvChargerCommand::SetCurrent { amps } => {
                 let reading = self.last_reading().ok_or(DriverError::Offline)?;
                 if reading.auto_current() == Some(true) {
@@ -383,9 +496,20 @@ impl V2cDriver {
         let _ = timeout(remaining, published).await;
     }
 
+    /// The cloud's share of a schedule command's budget: what is left once
+    /// the local write and the fresh reading (a normal command's time) are
+    /// set aside.
+    fn cloud_budget(&self, started: Instant) -> Duration {
+        self.timing
+            .schedule_budget
+            .saturating_sub(self.timing.command_budget)
+            .saturating_sub(started.elapsed())
+    }
+
     /// Stores charging hours in the charger through the cloud, checks that
     /// it took them, then switches its schedule on or off locally. The
-    /// cloud is used for nothing else, and only here.
+    /// cloud is used for nothing else, and only here and in
+    /// `read_schedule`.
     async fn save_schedule(
         &self,
         enabled: bool,
@@ -408,27 +532,109 @@ impl V2cDriver {
             .map(|i| windows.get(i).or(windows.first()).cloned())
             .collect::<Option<_>>()
             .ok_or(DriverError::Unsupported)?;
-        // The cloud gets what is left once the local write and the fresh
-        // reading (a normal command's time) are set aside.
-        let for_cloud = self
-            .timing
-            .schedule_budget
-            .saturating_sub(self.timing.command_budget)
-            .saturating_sub(started.elapsed());
-        timeout(for_cloud, self.write_timers(cloud, &device_id, &timers))
+        {
+            // One cloud request at a time: a read never races this save.
+            let mut cloud_use = self.cloud_use.lock().await;
+            timeout(
+                self.cloud_budget(started),
+                self.write_timers(cloud, &device_id, &timers),
+            )
             .await
             .map_err(|_| DriverError::Timeout)??;
-        let mut unique: Vec<ChargingWindow> = Vec::new();
-        for window in windows {
-            if !unique.contains(&window) {
-                unique.push(window);
-            }
+            // The read-back counts as a read.
+            cloud_use.last_read = Some((Instant::now(), true));
         }
-        *lock(&self.saved_windows) = Some(unique);
+        self.remember(unique(windows), ScheduleSource::Saved).await;
         // On or off, on the charger itself (no internet needed).
         self.send(Write::Timer(enabled)).await?;
         self.refresh(started, self.timing.schedule_budget).await;
         Ok(())
+    }
+
+    /// Reads the charging hours from the cloud, once, because someone asked
+    /// (they opened the hours editor): the screen then shows the ones set
+    /// on the charger, also those changed in V2C's app. At most once per
+    /// `read_every`; asking sooner answers like the last read did. Nothing
+    /// is written anywhere but VESTA's own record of the hours.
+    async fn read_schedule(&self, started: Instant) -> Result<(), DriverError> {
+        let cloud = self.cloud.as_ref().ok_or(DriverError::Unsupported)?;
+        let device_id = self.known_id().ok_or(DriverError::Offline)?;
+        let read = {
+            let mut cloud_use = self.cloud_use.lock().await;
+            if let Some((at, worked)) = cloud_use.last_read
+                && at.elapsed() < self.timing.read_every
+            {
+                tracing::debug!(
+                    worked,
+                    "charging hours read moments ago; not asking again yet"
+                );
+                return if worked {
+                    Ok(())
+                } else {
+                    Err(DriverError::Protocol(
+                        "reading the charging hours failed moments ago; not asking again yet"
+                            .to_owned(),
+                    ))
+                };
+            }
+            let read = timeout(
+                self.cloud_budget(started),
+                cloud.send(&device_id, &CloudRequest::Reported),
+            )
+            .await
+            .map_err(|_| DriverError::Timeout)
+            .and_then(|answer| answer)
+            .and_then(|body| {
+                cloud::reported_timers(&body).ok_or_else(|| {
+                    DriverError::Protocol("the cloud did not report the charging hours".to_owned())
+                })
+            });
+            cloud_use.last_read = Some((Instant::now(), read.is_ok()));
+            read
+        };
+        let timers = read.inspect_err(|error| {
+            tracing::info!(%error, "could not read the charging hours");
+        })?;
+        let windows = unique(
+            timers
+                .into_iter()
+                .filter_map(|timer| match timer {
+                    ReportedTimer::Set(window) => Some(window.normalized()),
+                    ReportedTimer::NotSet => None,
+                })
+                .collect(),
+        );
+        if !windows.is_empty() && SCHEDULE_FEATURES.check(&windows).is_err() {
+            // Shown as they are: they are what the charger holds.
+            tracing::info!("the charger holds hours VESTA could not save itself");
+        }
+        tracing::info!(
+            windows = windows.len(),
+            "charging hours read from the charger"
+        );
+        self.remember(windows, ScheduleSource::Charger).await;
+        self.refresh(started, self.timing.schedule_budget).await;
+        Ok(())
+    }
+
+    /// Records the hours just read or saved, and keeps them for the next
+    /// start. A failure to keep them is logged: they stay on screen, only a
+    /// restart would forget them.
+    async fn remember(&self, windows: Vec<ChargingWindow>, source: ScheduleSource) {
+        let known = KnownSchedule {
+            windows,
+            origin: ScheduleOrigin::now(source),
+        };
+        let stored = known.stored();
+        *lock(&self.known_schedule) = Some(known);
+        let kept = match (StateKey::new(SCHEDULE_KEY), serde_json::to_value(stored)) {
+            (Ok(key), Ok(value)) => self.context.state().set(&key, value).await,
+            (Err(error), _) => Err(DriverError::other(error)),
+            (_, Err(error)) => Err(DriverError::other(error)),
+        };
+        if let Err(error) = kept {
+            tracing::warn!(%error, "could not keep the charging hours for the next start");
+        }
     }
 
     /// Writes both timers, then reads them back: a 200 does not prove the
@@ -468,8 +674,8 @@ impl V2cDriver {
         }
     }
 
-    fn saved_windows(&self) -> Option<Vec<ChargingWindow>> {
-        lock(&self.saved_windows).clone()
+    fn known_schedule(&self) -> Option<KnownSchedule> {
+        lock(&self.known_schedule).clone()
     }
 
     /// One reading from the charger we know (a different charger at the
@@ -503,10 +709,14 @@ impl V2cDriver {
     ) -> Result<(), DriverError> {
         let mut states: Vec<(&str, CapabilityState)> = Vec::new();
         if let Some(mut state) = reading.charger_state() {
-            // The hours last saved from here, when there are any (the
-            // charger does not report them locally).
-            state.charging_schedule = match (state.schedule_enabled, self.saved_windows()) {
-                (Some(enabled), Some(windows)) => Some(ChargingSchedule { enabled, windows }),
+            // The hours last read or saved, with where they came from and
+            // when (the charger does not report them locally).
+            state.charging_schedule = match (state.schedule_enabled, self.known_schedule()) {
+                (Some(enabled), Some(known)) => Some(ChargingSchedule {
+                    enabled,
+                    windows: known.windows,
+                    origin: Some(known.origin),
+                }),
                 _ => None,
             };
             states.push((CHARGER, state.into()));
@@ -628,8 +838,14 @@ impl DeviceDriver for V2cDriver {
             return Err(DriverError::Offline);
         }
         let started = Instant::now();
-        if let EvChargerCommand::SetChargingSchedule { enabled, windows } = cmd {
-            return self.save_schedule(enabled, windows, started).await;
+        match cmd {
+            EvChargerCommand::SetChargingSchedule { enabled, windows } => {
+                return self.save_schedule(enabled, windows, started).await;
+            }
+            EvChargerCommand::RefreshChargingSchedule => {
+                return self.read_schedule(started).await;
+            }
+            _ => {}
         }
         let write = self.plan(cmd)?;
         self.send(write).await?;

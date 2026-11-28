@@ -3,7 +3,8 @@
 //!
 //! - Loads `config.json` + `dashboard.json` from the app data directory;
 //!   without them it runs the built-in simulated home (onboarding comes
-//!   later).
+//!   later). Devices keep their state in `state/` there (one JSON file per
+//!   device, never secrets).
 //! - Release: listens on `127.0.0.1` (the port of the last run when it is
 //!   free, so the page origin and its per-screen settings survive a
 //!   restart; any free port otherwise) and serves the bundled UI and the
@@ -27,7 +28,9 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
-use vesta_hub::{ApiAuth, Hub, HubOptions, JsonFileStore, UiAsset, UiAssets, bind_loopback};
+use vesta_hub::{
+    ApiAuth, Hub, HubOptions, JsonFileStore, StateStorage, UiAsset, UiAssets, bind_loopback,
+};
 
 use crate::panel::Panel;
 
@@ -36,6 +39,8 @@ use crate::panel::Panel;
 const DEV_HUB_ORIGIN: &str = "http://127.0.0.1:8181";
 /// Remembers the release port between runs (see the module docs).
 const PORT_FILE: &str = "panel-port";
+/// The devices' state, in the app data directory.
+const STATE_DIR: &str = "state";
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The running Hub, kept as app state until exit.
@@ -67,6 +72,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<(InProcessHub, Pa
 
     let mut options = HubOptions {
         auth: ApiAuth::Sessions,
+        driver_state: driver_state(&data_dir, dashboard_file.is_some()),
         ..HubOptions::default()
     };
     match &dev_url {
@@ -168,6 +174,17 @@ fn load_home(data_dir: &Path) -> anyhow::Result<(HubConfig, Dashboard, Option<Pa
     let config = HubConfig::from_json(&config).context("invalid config.json")?;
     let dashboard = Dashboard::from_json(&dashboard).context("invalid dashboard.json")?;
     Ok((config, dashboard, saved_to))
+}
+
+/// Where devices keep what they must remember across restarts (e.g. a
+/// charger's last known hours): `state/` in the app data directory for a
+/// real home; in memory for the simulated home, like `vesta-hubd --dev`.
+fn driver_state(data_dir: &Path, real_home: bool) -> StateStorage {
+    if real_home {
+        StateStorage::Dir(data_dir.join(STATE_DIR))
+    } else {
+        StateStorage::Memory
+    }
 }
 
 /// `VESTA_HUB_ORIGIN` (shared with the Vite dev server) as a socket address.
@@ -308,6 +325,11 @@ mod tests {
             Some(dir.join("dashboard.json")),
             "a real home saves edits"
         );
+        assert_eq!(
+            driver_state(&dir, saved_to.is_some()),
+            StateStorage::Dir(dir.join("state"))
+        );
+        assert_eq!(driver_state(&dir, false), StateStorage::Memory);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
