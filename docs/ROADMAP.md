@@ -43,6 +43,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 | iPad as a wall panel | Apps can't turn the screen off; kiosk relies on Guided Access | Dim + black overlay; wake on device events |
 | iOS push | APNs keys can't be distributed in an open-source repo | ntfy first; relay later |
 | Solar inverters without a local API | Some inverters only expose data through the vendor cloud | Dedicated power meter instead |
+| Homes with several routers | Extra routers left in router mode create separate networks (double NAT): the hub cannot discover or reach devices behind them, and phones on that network cannot find the hub | Setup runs a network check (several gateways or subnets, devices that never answer) and explains the fix in plain words, e.g. "put this router in bridge mode" |
 
 ## Open Questions
 - **Doorbell recommendation** — mid-range, PoE, `go2rtc`-native two-way audio. Reolink doorbells are ruled out for now: talkback is not reliably available over RTSP/ONVIF.
