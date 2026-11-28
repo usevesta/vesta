@@ -42,6 +42,7 @@ pub(crate) struct Runtime {
     drivers: HashMap<DeviceId, Arc<dyn DeviceDriver>>,
     bus: EventBus,
     command_timeout: Duration,
+    slow_command_timeout: Duration,
 }
 
 impl Runtime {
@@ -74,6 +75,7 @@ impl Runtime {
             drivers,
             bus: EventBus::new(options.bus_capacity),
             command_timeout: options.command_timeout,
+            slow_command_timeout: options.slow_command_timeout,
         });
 
         let (tx, rx) = mpsc::channel(UPDATE_BUFFER);
@@ -114,7 +116,8 @@ impl Runtime {
     /// Runs one command. Checks, in order: the target exists and supports
     /// the command (`unsupported`), sensitive commands carry
     /// `confirmed: true` (`rejected`), the device is online (`offline`);
-    /// then the driver gets `command_timeout` to accept it (`timeout`).
+    /// then the driver gets `command_timeout` (`slow_command_timeout` for a
+    /// slow command) to accept it (`timeout`).
     pub(crate) async fn execute(&self, request: &CommandRequest) -> Result<(), CommandError> {
         let target = &request.target;
         let (endpoint_type, online) = {
@@ -144,8 +147,13 @@ impl Runtime {
             .get(target.device())
             .ok_or(CommandError::Unsupported)?;
         let capability = request.command.capability();
+        let limit = if request.command.is_slow() {
+            self.slow_command_timeout
+        } else {
+            self.command_timeout
+        };
         match timeout(
-            self.command_timeout,
+            limit,
             driver.execute(target.endpoint(), request.command.clone()),
         )
         .await

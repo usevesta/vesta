@@ -20,7 +20,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 ### v2 — Doorbell, door access & energy
 - Video doorbell: live WebRTC video, two-way audio, ring event, wake the panel.
 - Door opening: motorized smart lock (stateful lock) or electric strike (momentary trigger), with biometric confirmation.
-- Energy: EV chargers with a local API (V2C Trydan driver and the energy-flow charger widget: done), power meters (e.g. Shelly Pro EM).
+- Energy: EV chargers with a local API (V2C Trydan driver and the energy-flow charger widget: done; charging hours editable from the panel, stored in the charger, saved through V2C's cloud with an optional key: done, live test pending), power meters (e.g. Shelly Pro EM).
 - Full Android kiosk: Device Owner provisioning, LockTask, silent OTA.
 - Shelly driver.
 
@@ -44,6 +44,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 | iPad as a wall panel | Apps can't turn the screen off; kiosk relies on Guided Access | Dim + black overlay; wake on device events |
 | iOS push | APNs keys can't be distributed in an open-source repo | ntfy first; relay later |
 | Solar inverters without a local API | Some inverters only expose data through the vendor cloud | Dedicated power meter instead |
+| Settings only a vendor cloud can change (e.g. a charger's hours) | Needs internet, an account and a key; undocumented details | Store the setting in the device, so it works offline; use the cloud only when the person saves, never for daily operation; closed list of requests, tested |
 | Homes with several routers | Extra routers left in router mode create separate networks (double NAT): the hub cannot discover or reach devices behind them, and phones on that network cannot find the hub | Setup runs a network check (several gateways or subnets, devices that never answer) and explains the fix in plain words, e.g. "put this router in bridge mode" |
 
 ## Open Questions

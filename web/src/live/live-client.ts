@@ -37,6 +37,16 @@ import {
 
 /** How long a command may stay unconfirmed before the screen reverts it. */
 export const COMMAND_TIMEOUT_MS = 5_000
+/**
+ * The same for slow commands (saving a charger's hours may go through the
+ * internet). Matches `SLOW_COMMAND_TIMEOUT` on the home (`Command::is_slow`).
+ */
+export const SLOW_COMMAND_TIMEOUT_MS = 20_000
+
+/** Commands the home gives longer (`Command::is_slow`). */
+export function isSlowCommand(command: Command): boolean {
+  return command.capability === 'ev_charger' && command.action === 'set_charging_schedule'
+}
 
 /**
  * Why a command did not happen: the home's error codes, plus two the
@@ -70,6 +80,7 @@ export interface LiveClientOptions extends Pick<
 > {
   store: DeviceStore
   commandTimeoutMs?: number
+  slowCommandTimeoutMs?: number
   /** Show a failure to the person (a translated toast in the app). */
   onCommandFailed?: (failure: CommandFailure) => void
   newRequestId?: () => string
@@ -81,11 +92,27 @@ export type ServerMessageListener = (message: ServerMessage) => void
 interface InFlight {
   readonly target: Target
   readonly command: Command
+  readonly confirmed: boolean
   readonly label: string | undefined
+  readonly outcome: Promise<CommandOutcome>
   readonly resolve: (outcome: CommandOutcome) => void
   timer: ReturnType<typeof setTimeout> | null
   /** The home's `command_result` arrived (the promise is settled). */
   answered: boolean
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const keysA = Object.keys(a)
+  const keysB = Object.keys(b)
+  return (
+    keysA.length === keysB.length &&
+    keysA.every(
+      (key) => Object.hasOwn(b, key) && sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+    )
+  )
 }
 
 function randomToken(): string {
@@ -107,6 +134,7 @@ export class LiveClient {
   readonly socket: ReconnectingSocket
   readonly #store: DeviceStore
   readonly #timeoutMs: number
+  readonly #slowTimeoutMs: number
   readonly #onCommandFailed: (failure: CommandFailure) => void
   readonly #newRequestId: () => string
   readonly #inFlight = new Map<string, InFlight>()
@@ -118,6 +146,7 @@ export class LiveClient {
     this.socket = new ReconnectingSocket(options)
     this.#store = options.store
     this.#timeoutMs = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS
+    this.#slowTimeoutMs = options.slowCommandTimeoutMs ?? SLOW_COMMAND_TIMEOUT_MS
     this.#onCommandFailed = options.onCommandFailed ?? (() => undefined)
     this.#newRequestId = options.newRequestId ?? requestIdGenerator()
   }
@@ -180,6 +209,10 @@ export class LiveClient {
     if (!data.synced || this.socket.snapshot.status !== 'open') {
       return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
     }
+    // The same command is already on its way (e.g. the same button on the
+    // tile and in its dialog): never send it twice, share its outcome.
+    const twin = this.#twin(target, command, confirmed)
+    if (twin !== undefined) return twin.outcome
 
     const requestId = this.#newRequestId()
     const { predicted, confirmsWith } = predict(command, selectEndpointView(data, target)?.endpoint)
@@ -201,13 +234,29 @@ export class LiveClient {
       return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
     }
 
-    return new Promise<CommandOutcome>((resolve) => {
-      const entry: InFlight = { target, command, label, resolve, timer: null, answered: false }
-      entry.timer = setTimeout(() => {
-        this.#onTimeout(requestId)
-      }, this.#timeoutMs)
-      this.#inFlight.set(requestId, entry)
+    let resolve: (outcome: CommandOutcome) => void = () => undefined
+    const outcome = new Promise<CommandOutcome>((settle) => {
+      resolve = settle
     })
+    const entry: InFlight = { target, command, confirmed, label, outcome, resolve, timer: null, answered: false }
+    entry.timer = setTimeout(
+      () => {
+        this.#onTimeout(requestId)
+      },
+      isSlowCommand(command) ? this.#slowTimeoutMs : this.#timeoutMs,
+    )
+    this.#inFlight.set(requestId, entry)
+    return outcome
+  }
+
+  /** An identical command still waiting for the home's answer. */
+  #twin(target: Target, command: Command, confirmed: boolean): InFlight | undefined {
+    for (const entry of this.#inFlight.values()) {
+      if (!entry.answered && entry.target === target && entry.confirmed === confirmed && sameValue(entry.command, command)) {
+        return entry
+      }
+    }
+    return undefined
   }
 
   #update(reducer: (data: DeviceData) => DeviceData): void {

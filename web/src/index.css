@@ -58,7 +58,9 @@
   --color-energy-house: var(--energy-house);
   --color-energy-car: var(--energy-car);
   --color-energy-battery: var(--energy-battery);
-  --color-energy-limit: var(--energy-limit);
+  /* Close to a limit (warning) and above it (stronger, still not an error). */
+  --color-warning: var(--warning);
+  --color-warning-strong: var(--warning-strong);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -116,7 +118,9 @@
   --energy-house: oklch(0.45 0.03 260);
   --energy-car: oklch(0.58 0.14 158);
   --energy-battery: oklch(0.58 0.11 205);
-  --energy-limit: oklch(0.64 0.17 48);
+
+  --warning: oklch(0.57 0.14 62);
+  --warning-strong: oklch(0.54 0.18 38);
 }
 
 /* ---------- Preset: default (dark) ---------- */
@@ -158,7 +162,9 @@
   --energy-house: oklch(0.86 0.02 260);
   --energy-car: oklch(0.79 0.15 158);
   --energy-battery: oklch(0.78 0.11 200);
-  --energy-limit: oklch(0.77 0.15 55);
+
+  --warning: oklch(0.8 0.14 70);
+  --warning-strong: oklch(0.72 0.17 42);
 }
 
 /* ---------- Preset: glass-dark ---------- */
@@ -196,7 +202,9 @@
   --energy-house: oklch(0.9 0.025 262);
   --energy-car: oklch(0.82 0.14 162);
   --energy-battery: oklch(0.8 0.1 198);
-  --energy-limit: oklch(0.8 0.14 58);
+
+  --warning: oklch(0.83 0.13 72);
+  --warning-strong: oklch(0.75 0.16 44);
 
   --glass-blur: 18px;
   --scrim: oklch(0.1 0.02 262 / 95%);

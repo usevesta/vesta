@@ -42,6 +42,7 @@ import {
   Fence,
   FlaskConical,
   Gauge,
+  Hourglass,
   House,
   HousePlug,
   HouseWifi,
@@ -146,6 +147,8 @@ export const ICONS = {
 
   // States
   loading: LoaderCircle,
+  /** Busy, when the screen asks for less motion (a spinner that does not spin). */
+  busy: Hourglass,
   success: CircleCheck,
   info: Info,
   warning: TriangleExclamationPoint,

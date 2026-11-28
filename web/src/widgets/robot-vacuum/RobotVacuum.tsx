@@ -1,9 +1,11 @@
 import { useTranslation } from 'react-i18next'
 
 import type { RobotVacuumStatus } from '@/api/generated'
+import { CommandButton } from '@/components/CommandButton'
 import { Icon } from '@/components/Icon'
-import { Button } from '@/components/ui/button'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { useElementWidth } from '@/lib/use-element-width'
 import { cn } from '@/lib/utils'
 import { availableActions, isBusy, splitMinutes, statusKey } from '@/widgets/robot-vacuum/robot'
@@ -22,10 +24,13 @@ export interface RobotVacuumProps extends WidgetStatusProps {
   /** The current (or last) cleaning. */
   cleanedAreaM2?: number
   cleaningDurationS?: number
-  /** Each present only when the robot can do it from here. */
-  onStart?: () => void
-  onPause?: () => void
-  onReturnToDock?: () => void
+  /**
+   * Each present only when the robot can do it from here. A promise they
+   * return keeps the button busy.
+   */
+  onStart?: CommandHandler
+  onPause?: CommandHandler
+  onReturnToDock?: CommandHandler
 }
 
 function Battery({ percent, low, charging }: { percent: number; low: boolean; charging: boolean }) {
@@ -70,10 +75,13 @@ export function RobotVacuum({
 }: RobotVacuumProps) {
   const { t, i18n } = useTranslation()
   const [ref, width] = useElementWidth()
+  const start = useCommand(onStart)
+  const pause = useCommand(onPause)
+  const dock = useCommand(onReturnToDock)
   const compact = width !== null && width < LABELS_MIN_PX
   const key = statusKey(status)
   const actions = availableActions(status)
-  const busy = isBusy(status)
+  const active = isBusy(status)
   const working = status === 'cleaning'
 
   const facts: string[] = []
@@ -90,43 +98,52 @@ export function RobotVacuum({
   const text = (words: string) => (compact ? <span className="sr-only">{words}</span> : words)
   const buttons = [
     onStart === undefined ? null : (
-      <Button
+      <CommandButton
         key="start"
         variant={actions.resumes ? 'default' : 'secondary'}
         className={buttonClass}
         disabled={unavailable || !actions.start}
+        busy={start.busy}
+        icon="resume"
         aria-label={actions.resumes ? t('robot.resumeLabel', { name: label }) : t('robot.startLabel', { name: label })}
-        onClick={onStart}
+        onClick={() => {
+          start.run()
+        }}
       >
-        <Icon name="resume" className="size-5" />
         {text(actions.resumes ? t('robot.resume') : t('robot.start'))}
-      </Button>
+      </CommandButton>
     ),
     onPause === undefined ? null : (
-      <Button
+      <CommandButton
         key="pause"
         variant="secondary"
         className={buttonClass}
         disabled={unavailable || !actions.pause}
+        busy={pause.busy}
+        icon="pause"
         aria-label={t('robot.pauseLabel', { name: label })}
-        onClick={onPause}
+        onClick={() => {
+          pause.run()
+        }}
       >
-        <Icon name="pause" className="size-5" />
         {text(t('robot.pause'))}
-      </Button>
+      </CommandButton>
     ),
     onReturnToDock === undefined ? null : (
-      <Button
+      <CommandButton
         key="dock"
         variant="secondary"
         className={buttonClass}
         disabled={unavailable || !actions.dock}
+        busy={dock.busy}
+        icon="to_dock"
         aria-label={t('robot.dockLabel', { name: label })}
-        onClick={onReturnToDock}
+        onClick={() => {
+          dock.run()
+        }}
       >
-        <Icon name="to_dock" className="size-5" />
         {text(t('robot.dock'))}
-      </Button>
+      </CommandButton>
     ),
   ].filter((button) => button !== null)
 
@@ -142,7 +159,7 @@ export function RobotVacuum({
         icon={icon}
         title={label}
         subtitle={key === null ? undefined : t(key)}
-        active={busy}
+        active={active}
         pending={pending}
         unavailable={unavailable}
         headerAction={compact ? undefined : battery}

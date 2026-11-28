@@ -85,6 +85,11 @@ struct MockState {
     wants_listing: AtomicBool,
     /// Claim another device ID in answers (3.3).
     impostor: AtomicBool,
+    /// Report a command's new values before answering it (some devices do).
+    report_first: AtomicBool,
+    /// After a command, these data points change this much later, without
+    /// a report: like a plug whose power reading catches up by itself.
+    metering: Mutex<Option<(Duration, Map<String, Value>)>>,
     push: broadcast::Sender<Map<String, Value>>,
     kick: broadcast::Sender<()>,
 }
@@ -120,6 +125,8 @@ impl Mock {
             ignoring_commands: AtomicBool::new(false),
             wants_listing: AtomicBool::new(false),
             impostor: AtomicBool::new(false),
+            report_first: AtomicBool::new(false),
+            metering: Mutex::new(None),
             push: broadcast::channel(16).0,
             kick: broadcast::channel(4).0,
         });
@@ -329,18 +336,29 @@ async fn serve(state: Arc<MockState>, mut stream: TcpStream) {
                         None
                     } else {
                         state.dps.lock().unwrap().extend(dps.clone());
+                        if let Some((lag, later)) = state.metering.lock().unwrap().clone() {
+                            let shared = Arc::clone(&state);
+                            tokio::spawn(async move {
+                                tokio::time::sleep(lag).await;
+                                shared.dps.lock().unwrap().extend(later);
+                            });
+                        }
                         let ack = codec
                             .encode_frame(message.seq, message.cmd, 0, b"")
                             .unwrap();
-                        if !write(&mut stream, &ack).await {
+                        seq += 1;
+                        let report = codec
+                            .encode_frame(seq, cmd::STATUS, 0, &status_payload(&state, &dps))
+                            .unwrap();
+                        let (first, then) = if state.report_first.load(Ordering::SeqCst) {
+                            (report, ack)
+                        } else {
+                            (ack, report)
+                        };
+                        if !write(&mut stream, &first).await {
                             return;
                         }
-                        seq += 1;
-                        Some(
-                            codec
-                                .encode_frame(seq, cmd::STATUS, 0, &status_payload(&state, &dps))
-                                .unwrap(),
-                        )
+                        Some(then)
                     }
                 }
                 _ => None,
@@ -369,7 +387,11 @@ fn fast_timing() -> Timing {
         offline_after: 2,
         discovery_wait: Duration::from_millis(300),
         command_budget: Duration::from_millis(1_500),
-        confirm_query: Duration::from_millis(100),
+        follow_ups: [
+            Duration::from_millis(100),
+            Duration::from_millis(250),
+            Duration::from_millis(500),
+        ],
     }
 }
 
@@ -643,6 +665,75 @@ async fn a_repeated_command_is_still_confirmed_on_screen() {
         OnOffState { on: true }.into()
     );
     assert_eq!(mock.sets(), [json!({ "1": true })]);
+}
+
+#[tokio::test]
+async fn the_power_reading_catches_up_moments_after_a_switch() {
+    // Whether the device answers the command first or reports first, and
+    // with polls far apart: the new power shows within moments.
+    for report_first in [false, true] {
+        let mock = Mock::start(
+            Version::V35,
+            json!({ "1": false, "20": 2, "21": 0, "22": 0, "23": 2272 }),
+        )
+        .await;
+        mock.state
+            .report_first
+            .store(report_first, Ordering::SeqCst);
+        *mock.state.metering.lock().unwrap() = Some((
+            Duration::from_millis(150),
+            json!({ "21": 652, "22": 1480 })
+                .as_object()
+                .unwrap()
+                .clone(),
+        ));
+        let timing = Timing {
+            poll: Duration::from_secs(30),
+            silence: Duration::from_secs(5),
+            ..fast_timing()
+        };
+        let driver = driver_with(
+            config("3.5", "tdq", plug_mapping(), mock.port()),
+            timing,
+            Discovery::idle(),
+        );
+        let mut running = start(&driver);
+        assert_eq!(
+            running.state_of(CapabilityKind::PowerMeter).await,
+            PowerMeterState {
+                voltage_v: Some(227.2),
+                current_a: Some(0.0),
+                ..PowerMeterState::power(0.0)
+            }
+            .into()
+        );
+        let queries = Mock::count(&mock.state.queries);
+        let sent = Instant::now();
+        driver
+            .execute(&EndpointId::main(), Command::OnOff(OnOffCommand::On))
+            .await
+            .unwrap();
+        let caught_up = PowerMeterState {
+            voltage_v: Some(227.2),
+            current_a: Some(0.652),
+            ..PowerMeterState::power(148.0)
+        }
+        .into();
+        while running.state_of(CapabilityKind::PowerMeter).await != caught_up {}
+        assert!(
+            sent.elapsed() < Duration::from_secs(2),
+            "report_first {report_first}: {:?}",
+            sent.elapsed()
+        );
+        // A few status queries, no more; and the switch was set once.
+        running.drain(Duration::from_millis(700)).await;
+        let extra = Mock::count(&mock.state.queries) - queries;
+        assert!(
+            (1..=3).contains(&extra),
+            "report_first {report_first}: {extra}"
+        );
+        assert_eq!(mock.sets(), [json!({ "1": true })]);
+    }
 }
 
 #[tokio::test]

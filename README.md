@@ -38,7 +38,8 @@ The simulated home has lights, a ceiling fan with a light, a blind, a garage doo
 a doorbell that rings every 3 minutes (to see the doorbell screen), two plugs that measure what
 they draw (one of them only watched, so it has no switch), a robot vacuum (the **Plugs & Robot**
 page) and a car charger with solar panels on a compressed day (12 minutes for 24 hours) whose own
-power control keeps the home under its contracted power (the **Energy** page).
+power control keeps the home under its contracted power, and whose charging hours can be changed
+from its settings (the **Energy** page).
 
 Tap **Edit** on the screen to add, move, resize, rename or remove tiles and to manage pages. With
 `--dev`, changes live in memory only (restarting the hub resets the simulated home); with
@@ -130,7 +131,7 @@ Each kind of device has its own driver crate in `crates/drivers/`, enabled by a 
 | `driver` | Devices | Notes |
 |---|---|---|
 | `sim` | the simulated home | `vesta-hubd --dev`, demos and tests |
-| `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
+| `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. Optional `cloud_api_key`: change the charging hours from the panel (stored in the charger through V2C's cloud, only when saved). See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
 | `tuya` | Tuya / Smart Life plugs, switches and robot vacuums (local protocol 3.3, 3.4, 3.5) | found on the network by their own broadcasts; each needs its local key. See [`crates/drivers/vesta-driver-tuya/README.md`](crates/drivers/vesta-driver-tuya/README.md) |
 
 `config.example.json` shows one of each (with placeholder addresses and keys). Real `config.json`

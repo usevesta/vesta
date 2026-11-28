@@ -13,7 +13,7 @@ use ts_rs::TS;
 use crate::command::{
     Command, CoverCommand, EvChargerCommand, FanCommand, LockCommand, RobotVacuumCommand,
 };
-use crate::units::{Hue, Percent};
+use crate::units::{Hue, Percent, TimeOfDay};
 
 /// Name of a capability, as used for the keys of [`Capabilities`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
@@ -512,8 +512,156 @@ pub struct EvChargerFeatures {
     /// is unlocked; unlocking is sensitive.
     pub lock: bool,
     /// `set_schedule` works: the charger's own schedule can be switched on
-    /// and off. Its hours are set on the charger itself.
+    /// and off.
     pub schedule: bool,
+    /// The charger keeps a schedule of charging hours (time windows), and
+    /// what VESTA can do with it. Omitted when it has none, or when its
+    /// hours can only be seen and changed on the charger itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub charging_schedule: Option<ChargingScheduleFeatures>,
+}
+
+/// What a charger's schedule of charging hours allows. The schedule lives in
+/// the charger, which follows it by itself (AGENTS.md rule 7: it keeps
+/// working when VESTA, the panel or the internet are down).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChargingScheduleFeatures {
+    /// Most time windows the charger holds (at least 1).
+    pub max_windows: u8,
+    /// Each window can be limited to some days of the week. Otherwise every
+    /// window is every day.
+    pub weekdays: bool,
+    /// A window may run past midnight (it ends before it starts, e.g.
+    /// 22:00–06:00).
+    pub overnight: bool,
+    /// `set_charging_schedule` works: the hours can be changed from VESTA.
+    pub editable: bool,
+    /// The charger reports its hours. When `false`, `state.charging_schedule`
+    /// holds the hours last saved from VESTA (they may have been changed
+    /// elsewhere since) and is omitted until then.
+    pub reports_windows: bool,
+    /// Saving the hours needs the home's internet connection. Switching the
+    /// schedule on and off (`set_schedule`) and following it do not.
+    pub saving_needs_internet: bool,
+}
+
+impl ChargingScheduleFeatures {
+    /// Whether `windows` fit this charger: between 1 and `max_windows`
+    /// windows, each with at least one day and no day twice, every day
+    /// when the charger has no weekdays, never empty (start = end), and
+    /// past midnight only when the charger allows it.
+    pub fn check(&self, windows: &[ChargingWindow]) -> Result<(), ScheduleError> {
+        if windows.is_empty() {
+            return Err(ScheduleError::NoWindows);
+        }
+        if windows.len() > usize::from(self.max_windows) {
+            return Err(ScheduleError::TooManyWindows(self.max_windows));
+        }
+        for window in windows {
+            if window.days.is_empty() {
+                return Err(ScheduleError::NoDays);
+            }
+            let mut seen = [false; 7];
+            for day in &window.days {
+                let index = day.index();
+                if seen[index] {
+                    return Err(ScheduleError::RepeatedDay);
+                }
+                seen[index] = true;
+            }
+            if !self.weekdays && window.days.len() != Weekday::ALL.len() {
+                return Err(ScheduleError::DaysNotSupported);
+            }
+            if window.start == window.end {
+                return Err(ScheduleError::EmptyWindow);
+            }
+            if !self.overnight && window.end < window.start {
+                return Err(ScheduleError::OvernightNotSupported);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Why charging hours do not fit a charger (see
+/// [`ChargingScheduleFeatures::check`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ScheduleError {
+    #[error("a schedule needs at least one time window")]
+    NoWindows,
+    #[error("this charger holds at most {0} time windows")]
+    TooManyWindows(u8),
+    #[error("a time window needs at least one day")]
+    NoDays,
+    #[error("a day appears twice in a time window")]
+    RepeatedDay,
+    #[error("this charger's time windows are every day")]
+    DaysNotSupported,
+    #[error("a time window cannot start and end at the same time")]
+    EmptyWindow,
+    #[error("this charger's time windows cannot run past midnight")]
+    OvernightNotSupported,
+}
+
+/// A day of the week, Monday first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum Weekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl Weekday {
+    pub const ALL: [Self; 7] = [
+        Self::Monday,
+        Self::Tuesday,
+        Self::Wednesday,
+        Self::Thursday,
+        Self::Friday,
+        Self::Saturday,
+        Self::Sunday,
+    ];
+
+    /// 0 for Monday … 6 for Sunday.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One time window of a charging schedule: the charger may charge from
+/// `start` to `end` on `days`. A window that ends before it starts runs
+/// past midnight (22:00–06:00 ends the next morning); `days` are the days
+/// it starts on. Times are the home's local time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChargingWindow {
+    pub start: TimeOfDay,
+    pub end: TimeOfDay,
+    pub days: Vec<Weekday>,
+}
+
+impl ChargingWindow {
+    /// The same window with its days in week order (Monday first).
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.days.sort_unstable();
+        self.days.dedup();
+        self
+    }
+}
+
+/// A charger's schedule of charging hours: while `enabled`, it charges
+/// only within its `windows`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChargingSchedule {
+    /// Same as `state.schedule_enabled`.
+    pub enabled: bool,
+    pub windows: Vec<ChargingWindow>,
 }
 
 impl EvChargerFeatures {
@@ -582,6 +730,11 @@ pub struct EvChargerState {
     /// set on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_enabled: Option<bool>,
+    /// The charger's charging hours, when known (see
+    /// `features.charging_schedule.reports_windows`). Omitted while they
+    /// are not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charging_schedule: Option<ChargingSchedule>,
 }
 
 /// Charger status (Matter: EnergyEVSE `State`, plus `SupplyState` for
@@ -798,6 +951,12 @@ impl Capabilities {
                     EvChargerCommand::SetMode { mode } => features.modes.contains(mode),
                     EvChargerCommand::Lock | EvChargerCommand::Unlock => features.lock,
                     EvChargerCommand::SetSchedule { .. } => features.schedule,
+                    // Editable, and hours that fit this charger.
+                    EvChargerCommand::SetChargingSchedule { windows, .. } => {
+                        features.charging_schedule.is_some_and(|schedule| {
+                            schedule.editable && schedule.check(windows).is_ok()
+                        })
+                    }
                 }
             }),
             Command::RobotVacuum(cmd) => self.robot_vacuum.as_ref().is_some_and(|cap| {
@@ -1041,6 +1200,7 @@ mod tests {
             adjustable_current: true,
             lock: false,
             schedule: false,
+            charging_schedule: None,
         }
     }
 
@@ -1059,6 +1219,7 @@ mod tests {
             mode: None,
             locked: None,
             schedule_enabled: None,
+            charging_schedule: None,
         }
     }
 
@@ -1141,6 +1302,139 @@ mod tests {
             ..charger_features()
         };
         assert!(all.iter().all(|cmd| !caps(&read_only).supports(cmd)));
+    }
+
+    fn window(start: &str, end: &str, days: &[Weekday]) -> ChargingWindow {
+        ChargingWindow {
+            start: start.parse().unwrap(),
+            end: end.parse().unwrap(),
+            days: days.to_vec(),
+        }
+    }
+
+    fn schedule_features() -> ChargingScheduleFeatures {
+        ChargingScheduleFeatures {
+            max_windows: 2,
+            weekdays: true,
+            overnight: true,
+            editable: true,
+            reports_windows: false,
+            saving_needs_internet: true,
+        }
+    }
+
+    #[test]
+    fn charging_hours_must_fit_the_charger() {
+        use Weekday::*;
+        let features = schedule_features();
+        let night = window("22:00", "06:00", &Weekday::ALL);
+        let weekend = window("10:00", "14:00", &[Saturday, Sunday]);
+        assert_eq!(features.check(std::slice::from_ref(&night)), Ok(()));
+        assert_eq!(features.check(&[night.clone(), weekend.clone()]), Ok(()));
+        assert_eq!(features.check(&[]), Err(ScheduleError::NoWindows));
+        assert_eq!(
+            features.check(&[night.clone(), weekend.clone(), night.clone()]),
+            Err(ScheduleError::TooManyWindows(2))
+        );
+        assert_eq!(
+            features.check(&[window("22:00", "06:00", &[])]),
+            Err(ScheduleError::NoDays)
+        );
+        assert_eq!(
+            features.check(&[window("22:00", "06:00", &[Monday, Monday])]),
+            Err(ScheduleError::RepeatedDay)
+        );
+        assert_eq!(
+            features.check(&[window("06:00", "06:00", &[Monday])]),
+            Err(ScheduleError::EmptyWindow)
+        );
+
+        let same_day_only = ChargingScheduleFeatures {
+            overnight: false,
+            weekdays: false,
+            ..features
+        };
+        assert_eq!(
+            same_day_only.check(&[window("01:00", "07:00", &Weekday::ALL)]),
+            Ok(())
+        );
+        assert_eq!(
+            same_day_only.check(&[night]),
+            Err(ScheduleError::OvernightNotSupported)
+        );
+        assert_eq!(
+            same_day_only.check(&[weekend]),
+            Err(ScheduleError::DaysNotSupported)
+        );
+    }
+
+    #[test]
+    fn charging_hours_are_editable_only_when_the_charger_says_so() {
+        use Weekday::*;
+        let caps = |schedule: Option<ChargingScheduleFeatures>| Capabilities {
+            ev_charger: Some(EvChargerCapability {
+                features: EvChargerFeatures {
+                    charging_schedule: schedule,
+                    ..charger_features()
+                },
+                state: None,
+            }),
+            ..Capabilities::default()
+        };
+        let save = |windows: Vec<ChargingWindow>| {
+            Command::EvCharger(EvChargerCommand::SetChargingSchedule {
+                enabled: true,
+                windows,
+            })
+        };
+        let good = save(vec![window("23:00", "07:00", &[Monday, Friday])]);
+        assert!(caps(Some(schedule_features())).supports(&good));
+        assert!(!caps(None).supports(&good));
+        let locked = ChargingScheduleFeatures {
+            editable: false,
+            ..schedule_features()
+        };
+        assert!(!caps(Some(locked)).supports(&good));
+        // Hours that do not fit are refused before reaching the driver.
+        assert!(!caps(Some(schedule_features())).supports(&save(Vec::new())));
+        assert!(good.is_slow());
+        assert!(!good.is_sensitive(crate::EndpointType::EvCharger));
+        assert!(!Command::EvCharger(EvChargerCommand::SetSchedule { enabled: true }).is_slow());
+    }
+
+    #[test]
+    fn charging_hours_on_the_wire() {
+        let command: Command = serde_json::from_value(serde_json::json!({
+            "capability": "ev_charger",
+            "action": "set_charging_schedule",
+            "enabled": true,
+            "windows": [{ "start": "22:00", "end": "06:00", "days": ["monday", "sunday"] }]
+        }))
+        .unwrap();
+        let Command::EvCharger(cmd) = &command else {
+            panic!("{command:?}");
+        };
+        let schedule = cmd.charging_schedule().unwrap();
+        assert!(schedule.enabled);
+        assert_eq!(schedule.windows[0].start.minutes(), 22 * 60);
+        assert_eq!(schedule.windows[0].days, [Weekday::Monday, Weekday::Sunday]);
+        for bad in [
+            serde_json::json!({ "start": "25:00", "end": "06:00", "days": ["monday"] }),
+            serde_json::json!({ "start": "22:00", "end": "06:00", "days": ["funday"] }),
+            serde_json::json!({ "start": 1320, "end": "06:00", "days": ["monday"] }),
+        ] {
+            assert!(
+                serde_json::from_value::<ChargingWindow>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
+        let normalized = window(
+            "10:00",
+            "12:00",
+            &[Weekday::Sunday, Weekday::Monday, Weekday::Sunday],
+        )
+        .normalized();
+        assert_eq!(normalized.days, [Weekday::Monday, Weekday::Sunday]);
     }
     #[test]
     fn read_only_switches_refuse_every_on_off_command() {

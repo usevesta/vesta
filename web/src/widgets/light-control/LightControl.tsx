@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Icon } from '@/components/Icon'
 import { Switch } from '@/components/ui/switch'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { LabeledSlider } from '@/widgets/parts/LabeledSlider'
 import type { WidgetStatusProps } from '@/widgets/types'
 import { WidgetFrame } from '@/widgets/WidgetFrame'
@@ -20,14 +22,15 @@ export interface LightControlProps extends WidgetStatusProps {
   /** Semantic icon. Default "light". */
   icon?: IconName
   on: boolean
-  onToggle: (on: boolean) => void
+  /** Command callbacks: a promise they return keeps the control busy. */
+  onToggle: CommandHandler<[boolean]>
   /** Brightness in % (1–100). Omit when the light cannot dim. */
   brightness?: number
   /** Dragging while off should switch the light on (handled upstream). */
-  onBrightnessChange?: (brightness: number) => void
+  onBrightnessChange?: CommandHandler<[number]>
   /** Present when the light supports white tone (Kelvin). */
   colorTemperature?: LightColorTemperature
-  onColorTemperatureChange?: (kelvin: number) => void
+  onColorTemperatureChange?: CommandHandler<[number]>
 }
 
 export function LightControl({
@@ -44,6 +47,7 @@ export function LightControl({
 }: LightControlProps) {
   const { t } = useTranslation()
   const switchId = useId()
+  const toggle = useCommand(onToggle)
   const percent = (value: number) => t('common.percent', { value: Math.round(value) })
 
   const subtitle = on
@@ -67,8 +71,9 @@ export function LightControl({
           size="lg"
           checked={on}
           disabled={unavailable}
+          busy={toggle.busy}
           aria-label={on ? t('widget.turnOff', { name: label }) : t('widget.turnOn', { name: label })}
-          onCheckedChange={onToggle}
+          onCheckedChange={toggle.run}
         />
       }
     >

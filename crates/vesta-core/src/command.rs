@@ -8,7 +8,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::capability::{CapabilityKind, EvChargeMode, FanDirection};
+use crate::capability::{
+    CapabilityKind, ChargingSchedule, ChargingWindow, EvChargeMode, FanDirection,
+};
 use crate::device::EndpointType;
 use crate::driver::DriverError;
 use crate::id::Target;
@@ -103,7 +105,7 @@ pub enum TriggerCommand {
     Fire,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum EvChargerCommand {
     /// Stops charging until `resume` (needs `features.pause`).
@@ -128,6 +130,29 @@ pub enum EvChargerCommand {
     SetSchedule {
         enabled: bool,
     },
+    /// Stores charging hours in the charger (it keeps following them by
+    /// itself) and switches its schedule on or off. Needs
+    /// `features.charging_schedule.editable` and windows that fit it
+    /// (`ChargingScheduleFeatures::check`). May need the internet
+    /// (`features.charging_schedule.saving_needs_internet`), so it may take
+    /// longer than other commands ([`Command::is_slow`]).
+    SetChargingSchedule {
+        enabled: bool,
+        windows: Vec<ChargingWindow>,
+    },
+}
+
+impl EvChargerCommand {
+    /// The schedule a `set_charging_schedule` asks for.
+    pub fn charging_schedule(&self) -> Option<ChargingSchedule> {
+        match self {
+            Self::SetChargingSchedule { enabled, windows } => Some(ChargingSchedule {
+                enabled: *enabled,
+                windows: windows.clone(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// Robot vacuum commands. Each needs its feature (`features.start`,
@@ -183,7 +208,8 @@ impl Command {
                 | EvChargerCommand::SetCurrent { .. }
                 | EvChargerCommand::SetMode { .. }
                 | EvChargerCommand::Lock
-                | EvChargerCommand::SetSchedule { .. },
+                | EvChargerCommand::SetSchedule { .. }
+                | EvChargerCommand::SetChargingSchedule { .. },
             ) => false,
             Self::OnOff(_)
             | Self::Level(_)
@@ -193,7 +219,20 @@ impl Command {
             | Self::RobotVacuum(_) => false,
         }
     }
+
+    /// Whether this command may take longer than the usual few seconds
+    /// (the Hub and the screens wait [`SLOW_COMMAND_TIMEOUT`] instead of
+    /// 5 s): saving a charger's hours may go through the internet.
+    pub const fn is_slow(&self) -> bool {
+        matches!(
+            self,
+            Self::EvCharger(EvChargerCommand::SetChargingSchedule { .. })
+        )
+    }
 }
+
+/// How long a slow command ([`Command::is_slow`]) may take.
+pub const SLOW_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Client → Hub request to run a command:
 /// `{ "type": "command", "request_id": "c-42", "target": "living_room_fan/light",

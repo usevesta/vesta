@@ -1,10 +1,11 @@
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Icon } from '@/components/Icon'
-import { Button } from '@/components/ui/button'
+import { CommandButton } from '@/components/CommandButton'
 import { Switch } from '@/components/ui/switch'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { LabeledSlider } from '@/widgets/parts/LabeledSlider'
 import type { WidgetStatusProps } from '@/widgets/types'
 import { WidgetFrame } from '@/widgets/WidgetFrame'
@@ -19,15 +20,16 @@ export interface FanControlProps extends WidgetStatusProps {
   /** Semantic icon. Default "fan". */
   icon?: IconName
   on: boolean
-  onToggle: (on: boolean) => void
+  /** Command callbacks: a promise they return keeps the control busy. */
+  onToggle: CommandHandler<[boolean]>
   /** Current speed, 1..speedSteps. */
   speed: number
   /** Number of speeds the fan offers (>= 1). */
   speedSteps: number
-  onSpeedChange: (speed: number) => void
+  onSpeedChange: CommandHandler<[number]>
   /** Present only when the fan can reverse. */
   direction?: FanDirection
-  onDirectionChange?: (direction: FanDirection) => void
+  onDirectionChange?: CommandHandler<[FanDirection]>
 }
 
 export function FanControl({
@@ -45,6 +47,9 @@ export function FanControl({
 }: FanControlProps) {
   const { t } = useTranslation()
   const switchId = useId()
+  const toggle = useCommand(onToggle)
+  const setSpeed = useCommand(onSpeedChange)
+  const setDirection = useCommand(onDirectionChange)
   const steps = Math.max(1, Math.floor(speedSteps))
   const speeds = Array.from({ length: steps }, (_, index) => index + 1)
 
@@ -63,8 +68,9 @@ export function FanControl({
           size="lg"
           checked={on}
           disabled={unavailable}
+          busy={toggle.busy}
           aria-label={on ? t('widget.turnOff', { name: label }) : t('widget.turnOn', { name: label })}
-          onCheckedChange={onToggle}
+          onCheckedChange={toggle.run}
         />
       }
     >
@@ -73,19 +79,21 @@ export function FanControl({
           {speeds.map((step) => {
             const selected = on && step === speed
             return (
-              <Button
+              <CommandButton
                 key={step}
                 variant={selected ? 'default' : 'secondary'}
                 className="h-auto min-h-14 flex-1 text-lg tabular-nums"
                 aria-pressed={selected}
                 aria-label={t('fan.speedStep', { speed: step })}
-                disabled={unavailable}
+                // One speed at a time: the others wait for this one.
+                disabled={unavailable || setSpeed.busy}
+                busy={setSpeed.busyWith?.[0] === step}
                 onClick={() => {
-                  onSpeedChange(step)
+                  setSpeed.run(step)
                 }}
               >
                 {step}
-              </Button>
+              </CommandButton>
             )
           })}
         </div>
@@ -103,19 +111,20 @@ export function FanControl({
       {direction !== undefined && onDirectionChange !== undefined && (
         <div role="group" aria-label={t('fan.direction')} className="flex gap-2">
           {(['forward', 'reverse'] as const).map((option) => (
-            <Button
+            <CommandButton
               key={option}
               variant={direction === option ? 'default' : 'secondary'}
               className="h-auto min-h-14 flex-1 gap-2 text-base"
               aria-pressed={direction === option}
-              disabled={unavailable}
+              disabled={unavailable || setDirection.busy}
+              busy={setDirection.busyWith?.[0] === option}
+              icon={option === 'forward' ? 'direction_forward' : 'direction_reverse'}
               onClick={() => {
-                onDirectionChange(option)
+                if (direction !== option) setDirection.run(option)
               }}
             >
-              <Icon name={option === 'forward' ? 'direction_forward' : 'direction_reverse'} className="size-5" />
               {option === 'forward' ? t('fan.forward') : t('fan.reverse')}
-            </Button>
+            </CommandButton>
           ))}
         </div>
       )}

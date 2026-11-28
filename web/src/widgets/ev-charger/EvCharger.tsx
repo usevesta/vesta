@@ -1,11 +1,20 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { EvChargeMode, EvChargerStatus, EvChargerWaitReason } from '@/api/generated'
+import type {
+  ChargingSchedule,
+  ChargingScheduleFeatures,
+  EvChargeMode,
+  EvChargerStatus,
+  EvChargerWaitReason,
+} from '@/api/generated'
+import { CommandButton } from '@/components/CommandButton'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { useElementWidth } from '@/lib/use-element-width'
 import { cn } from '@/lib/utils'
 import { ChargerControls, type CurrentRange } from '@/widgets/ev-charger/ChargerControls'
@@ -15,6 +24,7 @@ import {
   formatKw,
   formatKwh,
   headroom,
+  limitNoteKey,
   splitDuration,
   statusKey,
   type EnergyReadings,
@@ -57,16 +67,25 @@ export interface EvChargerProps extends WidgetStatusProps {
   modes?: readonly EvChargeMode[]
   locked?: boolean
   scheduleEnabled?: boolean
+  /** The charger's hours, when known. */
+  chargingSchedule?: ChargingSchedule
+  /** What the charger's hours allow (absent: they are set on the charger). */
+  scheduleFeatures?: ChargingScheduleFeatures
   /** The home's meters around the charger (the car's power comes from `powerW`). */
   readings?: EnergyReadings
-  /** Present only when the charger can pause and resume. */
-  onPause?: () => void
-  onResume?: () => void
-  onCurrentChange?: (amps: number) => void
-  onModeChange?: (mode: EvChargeMode) => void
+  /**
+   * Present only when the charger can pause and resume. Command callbacks:
+   * a promise they return keeps the control busy.
+   */
+  onPause?: CommandHandler
+  onResume?: CommandHandler
+  onCurrentChange?: CommandHandler<[number]>
+  onModeChange?: CommandHandler<[EvChargeMode]>
   /** Called after the person confirmed unlocking. */
-  onLockChange?: (locked: boolean) => void
-  onScheduleChange?: (enabled: boolean) => void
+  onLockChange?: CommandHandler<[boolean]>
+  onScheduleChange?: CommandHandler<[boolean]>
+  /** Present when the hours can be changed from here. */
+  onChargingScheduleChange?: CommandHandler<[ChargingSchedule]>
 }
 
 function Readout({ watts, size = 'lg' }: { watts: number | undefined; size?: 'lg' | 'xl' }) {
@@ -130,13 +149,22 @@ function useSession(props: EvChargerProps) {
   return { energy, time, now, set }
 }
 
-function HeadroomBar({ room }: { room: Headroom }) {
+/** Bar, words and color per level: warning when close, a stronger one above it. */
+const LIMIT_STYLE = {
+  normal: { bar: 'bg-energy-house/60', text: '' },
+  near: { bar: 'bg-warning', text: 'text-warning' },
+  over: { bar: 'bg-warning-strong', text: 'text-warning-strong' },
+} as const
+
+function HeadroomBar({ room, status, autoCurrent }: { room: Headroom } & Pick<EvChargerProps, 'status' | 'autoCurrent'>) {
   const { t, i18n } = useTranslation()
+  const note = limitNoteKey(room.level, { status, autoCurrent })
+  const style = LIMIT_STYLE[room.level]
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-slot="contracted-power" data-level={room.level}>
       <div className="flex items-baseline justify-between gap-2 text-sm">
         <span className="text-muted-foreground">{t('ev.contracted')}</span>
-        <span className="font-medium tabular-nums">
+        <span className={cn('font-medium tabular-nums', style.text)}>
           {t('ev.contractedValue', {
             used: formatKw(room.usedW, i18n.language),
             limit: formatKw(room.limitW, i18n.language),
@@ -146,16 +174,16 @@ function HeadroomBar({ room }: { room: Headroom }) {
       <span className="energy-layer block h-2 overflow-hidden rounded-full bg-muted">
         <span
           className={cn(
-            'block h-full origin-left rounded-full transition-[transform,background-color] duration-700',
-            room.nearLimit ? 'bg-energy-limit' : 'bg-energy-house/60',
+            'block h-full origin-left rounded-full transition-[transform,background-color] duration-700 motion-reduce:transition-none',
+            style.bar,
           )}
           style={{ transform: `scaleX(${String(room.ratio)})` }}
         />
       </span>
-      {room.nearLimit && (
-        <p className="flex items-start gap-1.5 text-sm leading-snug text-energy-limit">
+      {note !== null && (
+        <p role="status" className={cn('flex items-start gap-1.5 text-sm leading-snug', style.text)}>
           <Icon name="info" className="mt-0.5 size-4 shrink-0" />
-          {t('ev.nearLimit')}
+          {t(note)}
         </p>
       )}
     </div>
@@ -205,7 +233,7 @@ function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { setti
     >
       <section className="flex flex-col gap-4" aria-label={t('ev.flowTitle')}>
         {picture}
-        {room !== null && <HeadroomBar room={room} />}
+        {room !== null && <HeadroomBar room={room} status={status} autoCurrent={props.autoCurrent} />}
       </section>
       <section className="flex flex-col gap-5">
         <div className="flex flex-col gap-2">
@@ -232,6 +260,9 @@ function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { setti
                 onLockChange: props.onLockChange,
                 scheduleEnabled: props.scheduleEnabled,
                 onScheduleChange: props.onScheduleChange,
+                chargingSchedule: props.chargingSchedule,
+                scheduleFeatures: props.scheduleFeatures,
+                onChargingScheduleChange: props.onChargingScheduleChange,
               }
             : { modes: [] })}
         />
@@ -283,19 +314,24 @@ export function EvCharger(props: EvChargerProps) {
 
   const paused = status === 'paused'
   const primary = paused ? onResume : onPause
-  const primaryAction =
-    primary === undefined || glance ? null : (
-      <Button
-        variant={paused ? 'default' : 'secondary'}
-        className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
-        disabled={unavailable || status === undefined}
-        aria-label={paused ? t('ev.resumeLabel', { name: label }) : t('ev.pauseLabel', { name: label })}
-        onClick={primary}
-      >
-        <Icon name={paused ? 'resume' : 'pause'} className="size-5" />
-        {paused ? t('ev.resume') : t('ev.pause')}
-      </Button>
-    )
+  // One gate for pause and resume (the same button), on the tile and in the dialog.
+  const pauseResume = useCommand(primary)
+  const primaryButton = (
+    <CommandButton
+      variant={paused ? 'default' : 'secondary'}
+      className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
+      disabled={unavailable || status === undefined}
+      busy={pauseResume.busy}
+      icon={paused ? 'resume' : 'pause'}
+      aria-label={paused ? t('ev.resumeLabel', { name: label }) : t('ev.pauseLabel', { name: label })}
+      onClick={() => {
+        pauseResume.run()
+      }}
+    >
+      {paused ? t('ev.resume') : t('ev.pause')}
+    </CommandButton>
+  )
+  const primaryAction = primary === undefined || glance ? null : primaryButton
   const more = !withDialog ? null : (
     <Button
       variant="ghost"
@@ -377,18 +413,7 @@ export function EvCharger(props: EvChargerProps) {
                 <DialogTitle className="text-2xl">{label}</DialogTitle>
                 <DialogDescription className="text-base">{key === null ? '' : t(key, { power })}</DialogDescription>
               </span>
-              {primaryAction ??
-                (primary === undefined ? null : (
-                  <Button
-                    variant={paused ? 'default' : 'secondary'}
-                    className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
-                    disabled={unavailable || status === undefined}
-                    onClick={primary}
-                  >
-                    <Icon name={paused ? 'resume' : 'pause'} className="size-5" />
-                    {paused ? t('ev.resume') : t('ev.pause')}
-                  </Button>
-                ))}
+              {primary === undefined ? null : primaryButton}
             </DialogHeader>
             <ChargerDetails {...props} />
           </DialogContent>

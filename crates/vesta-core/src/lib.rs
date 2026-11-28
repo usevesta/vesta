@@ -29,21 +29,22 @@ pub use jiff::Timestamp;
 pub use bus::{BusEvent, BusRecv, EventBus, Subscription};
 pub use capability::{
     BatteryCapability, BatteryState, CameraCapability, CameraFeatures, CameraState, Capabilities,
-    CapabilityKind, CapabilityState, ColorCapability, ColorState, ColorTemperatureCapability,
-    ColorTemperatureFeatures, ColorTemperatureState, ContactCapability, ContactState,
-    CoverCapability, CoverFeatures, CoverKind, CoverMotion, CoverState, DoorbellCapability,
-    EvChargeMode, EvChargerCapability, EvChargerFeatures, EvChargerState, EvChargerStatus,
-    EvChargerWaitReason, FanCapability, FanDirection, FanFeatures, FanState, HumidityCapability,
-    HumidityState, LevelCapability, LevelState, LockCapability, LockFeatures, LockState,
-    LockStatus, MeterRole, OccupancyCapability, OccupancyState, OnOffCapability, OnOffFeatures,
-    OnOffState, PowerMeterCapability, PowerMeterFeatures, PowerMeterState, RobotVacuumCapability,
-    RobotVacuumFeatures, RobotVacuumState, RobotVacuumStatus, TemperatureCapability,
-    TemperatureState, TriggerCapability,
+    CapabilityKind, CapabilityState, ChargingSchedule, ChargingScheduleFeatures, ChargingWindow,
+    ColorCapability, ColorState, ColorTemperatureCapability, ColorTemperatureFeatures,
+    ColorTemperatureState, ContactCapability, ContactState, CoverCapability, CoverFeatures,
+    CoverKind, CoverMotion, CoverState, DoorbellCapability, EvChargeMode, EvChargerCapability,
+    EvChargerFeatures, EvChargerState, EvChargerStatus, EvChargerWaitReason, FanCapability,
+    FanDirection, FanFeatures, FanState, HumidityCapability, HumidityState, LevelCapability,
+    LevelState, LockCapability, LockFeatures, LockState, LockStatus, MeterRole,
+    OccupancyCapability, OccupancyState, OnOffCapability, OnOffFeatures, OnOffState,
+    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, RobotVacuumCapability,
+    RobotVacuumFeatures, RobotVacuumState, RobotVacuumStatus, ScheduleError, TemperatureCapability,
+    TemperatureState, TriggerCapability, Weekday,
 };
 pub use command::{
     ColorCommand, ColorTemperatureCommand, Command, CommandError, CommandRequest, CommandResult,
     CoverCommand, EvChargerCommand, FanCommand, LevelCommand, LockCommand, OnOffCommand,
-    RejectReason, RobotVacuumCommand, TriggerCommand,
+    RejectReason, RobotVacuumCommand, SLOW_COMMAND_TIMEOUT, TriggerCommand,
 };
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigError, DeviceConfig, EndpointOverride, Go2rtcSettings, HubConfig,
@@ -61,4 +62,4 @@ pub use id::{DeviceId, EndpointId, IdError, RoomId, Target};
 pub use message::{
     AvailabilityChange, ClientMessage, DashboardChanged, ServerMessage, Snapshot, StateChange,
 };
-pub use units::{Hue, OutOfRange, Percent};
+pub use units::{Hue, InvalidTimeOfDay, OutOfRange, Percent, TimeOfDay};

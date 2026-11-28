@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CommandButton } from '@/components/CommandButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { Icon } from '@/components/Icon'
-import { Button } from '@/components/ui/button'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
 import type { WidgetStatusProps } from '@/widgets/types'
 import { WidgetFrame } from '@/widgets/WidgetFrame'
@@ -16,8 +16,9 @@ export interface DoorButtonProps extends WidgetStatusProps {
   /**
    * Opening is sensitive: this runs only after the person confirms in a
    * dialog. Biometric checks on phones happen upstream, before sending.
+   * A promise it returns keeps the dialog, then the button, busy.
    */
-  onOpen: () => void
+  onOpen: CommandHandler
 }
 
 export function DoorButton({ label, icon = 'door', onOpen, pending = false, unavailable = false }: DoorButtonProps) {
@@ -26,17 +27,19 @@ export function DoorButton({ label, icon = 'door', onOpen, pending = false, unav
 
   return (
     <WidgetFrame icon={icon} title={label} pending={pending} unavailable={unavailable} active={pending}>
-      <Button
+      <CommandButton
         size="lg"
         className="h-auto min-h-16 w-full gap-3 text-xl"
-        disabled={unavailable || pending}
+        disabled={unavailable}
+        busy={pending}
+        icon="door_open"
+        iconClassName="size-6"
         onClick={() => {
           setConfirming(true)
         }}
       >
-        <Icon name={pending ? 'loading' : 'door_open'} className={pending ? 'size-6 motion-safe:animate-spin' : 'size-6'} />
         {pending ? t('door.opening') : t('door.open')}
-      </Button>
+      </CommandButton>
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
