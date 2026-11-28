@@ -7,6 +7,7 @@ members = [
     "crates/drivers/vesta-driver-sim",
     "apps/hubd",
     "apps/tauri/src-tauri",
+    "apps/tauri/plugins/panel",
 ]
 
 [workspace.package]
@@ -23,6 +24,8 @@ vesta-hub = { path = "crates/vesta-hub" }
 # Drivers are opt-in per Cargo feature; members enable the ones they need.
 vesta-drivers = { path = "crates/vesta-drivers", default-features = false }
 vesta-driver-sim = { path = "crates/drivers/vesta-driver-sim" }
+# The app's own Tauri plugin: native Android/iOS code for the panel window.
+tauri-plugin-vesta-panel = { path = "apps/tauri/plugins/panel" }
 
 # Shared third-party crates. Members opt into extra features as needed.
 anyhow = "1.0"
@@ -44,6 +47,8 @@ subtle = "2.6"
 # as `@tauri-apps/cli` / `@tauri-apps/api`.
 tauri = { version = "2.12", features = [] }
 tauri-build = { version = "2.7", features = [] }
+# Build-script helper for the app's own plugins (apps/tauri/plugins).
+tauri-plugin = { version = "2.7", features = [] }
 # Desktop keep-awake for the panel (IOKit / SetThreadExecutionState / D-Bus).
 keepawake = "0.6"
 thiserror = "2.0"

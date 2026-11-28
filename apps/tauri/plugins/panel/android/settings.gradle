@@ -1,0 +1,4 @@
+// Only used when this library is opened on its own; the app's generated
+// Gradle settings include it as `:tauri-plugin-vesta-panel`.
+include ':tauri-android'
+project(':tauri-android').projectDir = new File('./.tauri/tauri-api')

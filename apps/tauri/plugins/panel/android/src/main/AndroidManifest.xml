@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Merged into the app's manifest. With a network security config present,
+      Android (7.0+) ignores the generated `usesCleartextTraffic` placeholder,
+      so this file alone decides where plain HTTP may go, in debug and release.
+    -->
+    <application android:networkSecurityConfig="@xml/vesta_network_security_config" />
+</manifest>
