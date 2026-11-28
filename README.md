@@ -62,8 +62,56 @@ pnpm tauri dev --features hub
 pnpm tauri build --features hub --debug --bundles app
 ```
 
-Android and iOS are prepared (platform code behind `cfg`, native kiosk plugins still to come)
-but not built yet. iOS/iPadOS never get the `hub` feature.
+iOS/iPadOS never get the `hub` feature (iPhones and iPads are always clients); the iOS app is
+not built yet.
+
+### Android (the wall tablet)
+
+Needs Android Studio's SDK and NDK, a JDK 17 and the Rust Android targets
+([Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#android)):
+
+```sh
+export ANDROID_HOME="$HOME/Library/Android/sdk"          # macOS default
+export NDK_HOME="$ANDROID_HOME/ndk/<version>"
+export JAVA_HOME="<a JDK 17>"
+rustup target add aarch64-linux-android
+```
+
+The dev loop is build, install, read the logs. Debug APKs are signed with the local Android debug
+key (`~/.android/debug.keystore`, never in this repo).
+
+```sh
+cd apps/tauri
+# Debug APK with the hub in-process, for 64-bit ARM tablets and emulators
+pnpm tauri android build --debug --target aarch64 --apk --features hub
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+adb shell am start -n com.usevesta.app/.MainActivity
+# Rust logs (the hub too), Tauri and the page's console
+adb logcat -s RustStdoutStderr:V Tauri/Console:V
+```
+
+Without `config.json` + `dashboard.json` in the app's private folder
+(`/data/user/0/com.usevesta.app/`, reachable with `adb shell run-as com.usevesta.app` on debug
+builds) it runs the simulated home. Debug builds can be inspected from desktop Chrome at
+`chrome://inspect`. A release APK (`pnpm tauri android build --target aarch64 --apk --features
+hub`) comes out unsigned; signing for distribution is not set up yet.
+
+`pnpm tauri android dev` does not work with the hub in-process: Tauri's mobile dev mode loads the
+dev server through its own proxy (dropping the sign-in link), and the dev server on the computer
+would send `/api` to the computer, not to the tablet. The app stops with an error saying so. The
+UI is the same on every target, so do UI work with the browser or desktop loops above and use
+the APK for Android itself.
+
+Android pieces:
+
+- `apps/tauri/src-tauri/gen/android`: the Android Studio project exactly as
+  `pnpm tauri android init` generated it, plus the launcher icons from `pnpm tauri icon
+  src-tauri/icons/icon.svg`. Committed (Tauri's own template ignores only `gen/schemas`), but
+  never edited by hand for VESTA behaviour: regenerate it with the CLI after a Tauri upgrade.
+- `apps/tauri/plugins/panel` (`tauri-plugin-vesta-panel`): VESTA's native Android code, an
+  Android library merged into the app. Its network security config allows plain HTTP only to
+  `127.0.0.1` and `localhost` (the panel's own origin), in debug and release; it also keeps the
+  screen on while the panel is in the foreground.
 
 ## Checks
 
@@ -78,6 +126,9 @@ pnpm test:e2e   # end-to-end smoke test against a real vesta-hubd --dev
 
 cd ../apps/tauri
 pnpm tauri build --features hub --debug --bundles app   # the app still builds
+
+# The Android build of the app (needs the Android setup above)
+cargo clippy -p vesta-app --target aarch64-linux-android --features hub -- -D warnings
 ```
 
 `cargo test` also regenerates the TypeScript bindings in `web/src/api/generated/` (the app's
