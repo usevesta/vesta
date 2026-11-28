@@ -34,8 +34,10 @@ Open the `http://localhost:5173/` URL Vite prints. The dev server proxies `/api`
 WebSocket) to the hub. If the hub runs on another port (`--port 9000`), start the UI with
 `VESTA_HUB_ORIGIN=http://127.0.0.1:9000 pnpm dev`.
 
-The simulated home has lights, a ceiling fan with a light, a blind, a garage door, a door strike
-and a doorbell that rings every 3 minutes (to see the doorbell screen).
+The simulated home has lights, a ceiling fan with a light, a blind, a garage door, a door strike,
+a doorbell that rings every 3 minutes (to see the doorbell screen) and a car charger with solar
+panels on a compressed day (12 minutes for 24 hours) whose own power control keeps the home under
+its contracted power (the **Energy** page).
 
 Tap **Edit** on the screen to add, move, resize, rename or remove tiles and to manage pages. With
 `--dev`, changes live in memory only (restarting the hub resets the simulated home); with
@@ -71,6 +73,19 @@ pnpm tauri build --features hub --debug --bundles app
 Android and iOS are prepared (platform code behind `cfg`, native kiosk plugins still to come)
 but not built yet. iOS/iPadOS never get the `hub` feature.
 
+## Devices
+
+Each kind of device has its own driver crate in `crates/drivers/`, enabled by a Cargo feature of
+`vesta-drivers` (the only place that maps a `driver` key in `config.json` to a crate):
+
+| `driver` | Devices | Notes |
+|---|---|---|
+| `sim` | the simulated home | `vesta-hubd --dev`, demos and tests |
+| `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
+
+`config.example.json` shows one of each (with placeholder addresses). Real `config.json` files
+stay out of git.
+
 ## Checks
 
 ```sh
@@ -80,7 +95,7 @@ cargo test --workspace --all-features
 
 cd web
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
-pnpm test:e2e   # end-to-end tests (live control, editing the screen) against a real vesta-hubd --dev
+pnpm test:e2e   # end-to-end tests (live control, the car charger, editing the screen) against a real vesta-hubd --dev
 
 cd ../apps/tauri
 pnpm tauri build --features hub --debug --bundles app   # the app still builds

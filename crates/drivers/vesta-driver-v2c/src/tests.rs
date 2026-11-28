@@ -289,6 +289,18 @@ fn describes_the_charger_and_the_meters_it_was_told_about() {
 }
 
 #[test]
+fn the_config_example_builds_a_charger() {
+    let example: Value =
+        serde_json::from_str(include_str!("../../../../config.example.json")).unwrap();
+    let devices = example["devices"].as_array().unwrap();
+    let chargers: Vec<_> = devices.iter().filter(|d| d["driver"] == "v2c").collect();
+    assert_eq!(chargers.len(), 1);
+    let driver = V2cDriver::from_config(&chargers[0]["config"]).unwrap();
+    assert_eq!(driver.config().host, "192.0.2.10");
+    assert_eq!(driver.describe().endpoints.len(), 3);
+}
+
+#[test]
 fn features_are_honest() {
     let features = |config: Value| {
         driver(config).describe().endpoints[0]

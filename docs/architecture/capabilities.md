@@ -68,6 +68,76 @@ Why endpoints: a ceiling fan with a light has **two** things that switch on and 
 - `capabilities` is an object keyed by capability name. `features` is omitted for capabilities that have none; `state` is omitted while the driver does not know it yet (it never invents a value). A capability with neither (`trigger`, `doorbell`) is an empty object: `"trigger": {}`.
 - Optional fields: device `last_seen` (RFC 3339) and endpoint `room`, which overrides the device's room.
 
+### Example: a car charger and its meters
+
+A charger that also reads the home's grid and consumption is one device with an endpoint per
+function. The grid meter carries the contracted power as `limit_w`.
+
+```json
+{
+  "id": "car_charger",
+  "name": "Car Charger",
+  "room": "garage",
+  "online": true,
+  "endpoints": [
+    {
+      "id": "charger",
+      "name": "Car Charger",
+      "type": "ev_charger",
+      "capabilities": {
+        "ev_charger": {
+          "features": {
+            "min_current_a": 6.0,
+            "max_current_a": 32.0,
+            "modes": [],
+            "pause": true,
+            "adjustable_current": true,
+            "lock": true,
+            "schedule": true
+          },
+          "state": {
+            "status": "charging",
+            "power_w": 5092.0,
+            "session_energy_wh": 4890.0,
+            "session_duration_s": 3841,
+            "current_a": 23.0,
+            "auto_current": true,
+            "phase_current_a": [22.94, 0.0, 0.0],
+            "min_current_a": 6.0,
+            "max_current_a": 30.0,
+            "mode": "scheduled",
+            "locked": false,
+            "schedule_enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "grid",
+      "name": "Grid",
+      "type": "meter",
+      "capabilities": {
+        "power_meter": {
+          "features": { "role": "grid", "bidirectional": true },
+          "state": { "power_w": 5739.0, "limit_w": 5700.0 }
+        }
+      }
+    },
+    {
+      "id": "house",
+      "name": "House",
+      "type": "meter",
+      "capabilities": {
+        "power_meter": {
+          "features": { "role": "house", "bidirectional": false },
+          "state": { "power_w": 5739.0 }
+        }
+      }
+    }
+  ]
+}
+```
+
 ## Endpoint Types
 The type decides the icon, the default widget and whether opening commands are sensitive. Capabilities decide the controls. Drivers report a default type; users may override it from the UI (e.g. "this relay is a light").
 
@@ -86,7 +156,7 @@ The type decides the icon, the default widget and whether opening commands are s
 | `doorbell` | `doorbell`, `camera`, `occupancy` | no |
 | `sensor` | `occupancy`, `contact`, `temperature`, `humidity`, `battery` | no |
 | `meter` | `power_meter` | no |
-| `ev_charger` | `ev_charger`, `power_meter` | no |
+| `ev_charger` | `ev_charger` (its meters are sibling `meter` endpoints, see below) | no (but `ev_charger.unlock` is sensitive) |
 
 ## Capability Catalog
 
@@ -106,20 +176,28 @@ The type decides the icon, the default widget and whether opening commands are s
 | `contact` | — | `open: bool` | — | — | v2 |
 | `temperature` | — | `celsius` | — | — | v2 |
 | `humidity` | — | `percent: 0–100` | — | — | v2 |
-| `power_meter` | `role` (`grid`, `solar`, `load`, `ev`), `bidirectional: bool` | `power_w`, `energy_wh`, `energy_exported_wh?` | — | — | v2 |
-| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `scheduled`) | `status: disconnected \| connected \| charging \| paused \| error`, `power_w`, `session_energy_wh`, `current_a`, `mode` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }` | — | v2 |
+| `power_meter` | `role` (`grid`, `solar`, `load`, `ev`, `house`, `battery`), `bidirectional: bool` | `power_w`, `energy_wh?`, `energy_exported_wh?`, `limit_w?` | — | — | v2 |
+| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }` | — | v2 |
 | `battery` | — | `percent: 0–100`, `low: bool` | — | — | v2 |
 
 Notes:
 - `on_off` + `level`: `level.set` on an endpoint that is off turns it on (like Matter's *MoveToLevelWithOnOff*). Dragging a slider must light the lamp.
 - `cover` without `position` (e.g. many garage doors) only offers `open` / `close` (and `stop` if supported). `open` reports the end-stop state when a contact sensor exists.
 - `power_meter.role` describes *where* the clamp sits, which only the installer knows. Drivers may default it; users set it during setup. It is the one feature users may override.
-- `ev_charger.set_current` is always clamped to `max_current_a`. The device's own limits (e.g. contracted-power control) always prevail — VESTA never replaces them (AGENTS.md rule 7).
+- `ev_charger.set_current` is always clamped to the range the charger accepts right now: `state.min_current_a..state.max_current_a` (the limits configured on the charger) within `features` (the hardware). The device's own limits (e.g. contracted-power control) always prevail — VESTA never replaces them (AGENTS.md rule 7).
+- Every `ev_charger` command needs its feature (`pause` for `pause`/`resume`, `adjustable_current`, `lock` for `lock`/`unlock`, `schedule`, and the mode in `modes`); the Hub answers `unsupported` otherwise. A charger set up for monitoring only reports them all `false` and no modes, and the UI shows no controls.
+- `ev_charger.auto_current: true` means the charger's own power control chooses the current by itself (e.g. to stay within the contracted power): `set_current` would have no effect, so drivers refuse it and the UI shows the current as set by the charger.
+- `ev_charger.status: waiting` means a car is plugged in and the charger holds back by itself; `waiting_for` says why (`schedule`: outside the charger's hours, `solar`: not enough surplus sun, `power`: the home uses too much for even the minimum current), only when the charger makes it clear. `paused` is someone pausing it; `connected` is plugged in with no reason given (e.g. the car is full).
+- `ev_charger.current_a` is the setpoint (what the charger offers the car); `phase_current_a` is what the car draws, per phase (L1 first).
+- `ev_charger.mode`: `manual` charges at the set current (as fast as allowed), `solar` only with surplus sun, `solar_grid` with surplus sun topped up from the grid to the minimum current, `scheduled` as planned on the charger. Chargers whose schedule is a separate on/off (in any mode) report `features.schedule` and `state.schedule_enabled` instead.
+- A charger and the meters it reads (grid, house, solar, battery) are **endpoints of one device**: a charger widget finds its meters among its sibling endpoints by `role`.
+- `power_meter.limit_w` is the most power the connection may draw (the contracted power on a `grid` meter). It is informative only: VESTA never enforces it; the devices that do keep doing it.
+- `power_meter.energy_wh` is omitted when the device only measures power (no invented counters).
 
 ## Units & Conventions
 - Percent: integers `0–100`. Color temperature: Kelvin (not mireds). Hue: degrees `0–360`. Power: W. Energy: Wh. Temperature: °C. Durations: ms. Current: A.
 - Cover position: `100` = fully open, `0` = fully closed. (Matter's lift percentage is inverted; the bridge converts.)
-- Power sign follows the meter `role`'s natural direction: `grid` positive = importing, negative = exporting; `solar` positive = producing; `load`/`ev` positive = consuming.
+- Power sign follows the meter `role`'s natural direction: `grid` positive = importing, negative = exporting; `solar` positive = producing; `load`/`ev` positive = consuming; `house` (the whole home, sub-metered loads such as the EV charger included) positive = consuming; `battery` positive = discharging (supplying the home), negative = charging.
 - Drivers convert vendor units (e.g. brightness `10–1000` → `0–100`). Rounding is the driver's job, never the frontend's.
 
 ## Commands
@@ -139,8 +217,13 @@ Notes:
 - Error `code`s: `unsupported`, `offline`, `timeout`, `rejected` (with `reason`: `not_allowed` for role/permission/time window, `confirmation_required` for a sensitive command sent without `"confirmed": true`), `device` (optional driver-specific `message` for diagnostics, never shown raw to users and never containing hosts, addresses or credentials).
 
 ### Sensitive Commands
-`lock.unlock`, `lock.unlatch`, `trigger.fire`, and `cover.open` / `cover.set_position` on endpoints that guard access to the home (`garage_door`, `gate`, `door`, `lock` — the types marked sensitive above) are **sensitive**:
+`lock.unlock`, `lock.unlatch`, `trigger.fire`, `ev_charger.unlock` (anyone could charge afterwards), and `cover.open` / `cover.set_position` on endpoints that guard access to the home (`garage_door`, `gate`, `door`, `lock` — the types marked sensitive above) are **sensitive**:
 - They require a role that allows them (Guests may be limited to specific targets and time windows).
+- For example, unlocking a charger after the person confirmed it:
+  ```json
+  { "type": "command", "request_id": "c-43", "target": "car_charger/charger",
+    "command": { "capability": "ev_charger", "action": "unlock" }, "confirmed": true }
+  ```
 - On mobile they require biometric confirmation (Face ID / fingerprint) before sending, and the request carries `"confirmed": true`.
 - The Hub enforces this (role check, and `rejected` / `confirmation_required` without `confirmed`); the frontend only provides the confirmation UX.
 
@@ -159,7 +242,13 @@ Notes:
 - Server → client: `snapshot` (`devices`: all devices), `state` (`target`, `capability`, `state`), `event`, `availability` (`device_id`, `online`), `command_result` (`request_id`, `ok`, `error` when not ok), `dashboard_changed` (`revision`).
 - Client → server: `command`.
 - On connect, reconnect, or `RecvError::Lagged` on the Hub side, the client receives a fresh `snapshot`.
-- `state` always carries the capability's full state:
+- `state` always carries the capability's full state, e.g. a charger waiting for its charging hours:
+  ```json
+  { "type": "state", "target": "car_charger/charger", "capability": "ev_charger",
+    "state": { "status": "waiting", "waiting_for": "schedule", "power_w": 0.0, "session_energy_wh": 0.0,
+               "current_a": 16.0, "auto_current": false, "locked": false, "schedule_enabled": true } }
+  ```
+  or a light:
   ```json
   { "type": "state", "target": "living_room_fan/light", "capability": "level", "state": { "level": 80 } }
   ```
@@ -253,7 +342,7 @@ Drivers return `DriverError::Unsupported` for commands they cannot execute. Rout
 | `temperature` | TemperatureMeasurement |
 | `humidity` | RelativeHumidityMeasurement |
 | `power_meter` | ElectricalPowerMeasurement, ElectricalEnergyMeasurement |
-| `ev_charger` | EnergyEVSE |
+| `ev_charger` | EnergyEVSE (`State`, `SupplyState`, `SessionDuration`, `SessionEnergyCharged`, `MinimumChargeCurrent` / `MaximumChargeCurrent`, `CircuitCapacity` for the hardware maximum; `pause`/`resume` ↔ `Disable` / `EnableCharging`), EnergyEVSEMode for `mode` (Manual, TimeOfUse, SolarCharging), ElectricalPowerMeasurement for power and per-phase current; `lock` has no EVSE equivalent |
 | `battery` | PowerSource |
 | `trigger`, `camera`, `doorbell` | to be decided (depends on Matter version support) |
 
