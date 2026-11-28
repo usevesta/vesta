@@ -49,7 +49,7 @@ Goal: a real home controlled from a wall tablet and phones on the same network.
 ## Open Questions
 - **Doorbell recommendation** — mid-range, PoE, `go2rtc`-native two-way audio. Reolink doorbells are ruled out for now: talkback is not reliably available over RTSP/ONVIF.
 - **Inverters without a local API** — e.g. Huawei SUN2000 without an SDongle: Modbus TCP on the home LAN has been closed since late-2021 firmware.
-- **Tuya onboarding** without requiring a developer account.
+- **Tuya onboarding** without requiring a developer account: the plan is the Smart Life / Tuya Smart QR login (user code + QR, Tuya's device-sharing SDK — what Home Assistant has used since 2024.2) to fetch the local keys **once**, then local control only. Needs VESTA's own Tuya client registration (never reuse another project's). Until then: `tinytuya wizard` + `vesta-hubd tuya-import`.
 
 ## Costs for Maintainers
 End users pay nothing. Maintainers should expect:
