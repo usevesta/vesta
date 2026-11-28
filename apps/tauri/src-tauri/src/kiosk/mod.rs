@@ -9,10 +9,12 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
+#[cfg(target_os = "android")]
+mod android;
 #[cfg(desktop)]
 mod desktop;
-#[cfg(mobile)]
-mod mobile;
+#[cfg(target_os = "ios")]
+mod ios;
 
 /// What this device's panel can do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
@@ -68,11 +70,11 @@ pub trait KioskHost: Send + Sync + 'static {
 }
 
 /// A platform without any of these controls.
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unsupported;
 
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 impl KioskHost for Unsupported {
     fn capabilities(&self) -> KioskCapabilities {
         KioskCapabilities::default()
@@ -101,8 +103,10 @@ impl Kiosk {
     pub fn for_platform<R: Runtime>(app: &AppHandle<R>) -> Self {
         #[cfg(desktop)]
         let host = desktop::host(app);
-        #[cfg(mobile)]
-        let host = mobile::host(app);
+        #[cfg(target_os = "android")]
+        let host = android::host(app);
+        #[cfg(target_os = "ios")]
+        let host = ios::host(app);
         Self(host)
     }
 }

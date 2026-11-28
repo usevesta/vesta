@@ -32,6 +32,9 @@ pub fn run() {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        // On Android the runtime forwards stderr to logcat
+        // (`RustStdoutStderr`), which shows color codes as text.
+        .with_ansi(cfg!(not(target_os = "android")))
         .with_writer(std::io::stderr)
         .init();
     if let Err(error) = try_run() {
@@ -41,7 +44,11 @@ pub fn run() {
 }
 
 fn try_run() -> anyhow::Result<()> {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Native side of the panel window (see `kiosk/android.rs`).
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_vesta_panel::init());
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             kiosk::kiosk_capabilities,
             kiosk::kiosk_set_keep_awake,

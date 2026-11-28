@@ -1,0 +1,3 @@
+/build
+# Tauri's Android library, copied here by the plugin's build script.
+/.tauri

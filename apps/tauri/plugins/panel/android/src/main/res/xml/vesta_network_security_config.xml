@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plain HTTP only to this device's loopback: the panel is served by the local
+  endpoint on http://127.0.0.1:<port> (the in-process Hub, later the
+  vesta-link proxy), which never listens on the network. Everything else
+  needs TLS, in every build type.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

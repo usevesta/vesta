@@ -1,0 +1,21 @@
+[package]
+name = "tauri-plugin-vesta-panel"
+description = "Native side of the VESTA app's panel window: loopback-only cleartext and screen controls (Android today)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+# Tauri plugins must declare `links` with their own name: the app's build
+# script reads the Android library path from it.
+links = "tauri-plugin-vesta-panel"
+
+[build-dependencies]
+tauri-plugin = { workspace = true, features = ["build"] }
+
+[dependencies]
+serde.workspace = true
+tauri.workspace = true
+
+[lints]
+workspace = true
