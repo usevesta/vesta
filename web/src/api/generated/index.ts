@@ -46,6 +46,7 @@ export type * from "./EvChargerCommand";
 export type * from "./EvChargerFeatures";
 export type * from "./EvChargerState";
 export type * from "./EvChargerStatus";
+export type * from "./EvChargerWaitReason";
 export type * from "./EventKind";
 export type * from "./EventRef";
 export type * from "./FanCapability";

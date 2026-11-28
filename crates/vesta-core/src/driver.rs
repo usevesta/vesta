@@ -45,6 +45,10 @@ pub trait DeviceDriver: Send + Sync {
 pub enum DriverError {
     #[error("command not supported by this endpoint")]
     Unsupported,
+    /// The device is set up for monitoring only (e.g. `read_only` in its
+    /// driver config) and never receives commands.
+    #[error("this device is set up as read-only: commands are never sent to it")]
+    ReadOnly,
     #[error("unknown endpoint `{0}`")]
     UnknownEndpoint(EndpointId),
     #[error("device is offline")]

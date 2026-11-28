@@ -11,12 +11,15 @@ publish.workspace = true
 default = ["sim"]
 # Simulated devices for the development loop and tests.
 sim = ["dep:vesta-driver-sim"]
+# V2C Trydan EV chargers (local HTTP API).
+v2c = ["dep:vesta-driver-v2c"]
 
 [dependencies]
 serde_json.workspace = true
 thiserror.workspace = true
 vesta-core.workspace = true
 vesta-driver-sim = { workspace = true, optional = true }
+vesta-driver-v2c = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
