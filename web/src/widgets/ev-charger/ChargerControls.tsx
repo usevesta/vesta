@@ -70,9 +70,8 @@ function SettingRow({
   )
 }
 
-function StateText({ on }: { on: boolean }) {
-  const { t } = useTranslation()
-  return <span className="text-base font-medium text-muted-foreground">{on ? t('common.on') : t('common.off')}</span>
+function StateText({ children }: { children: ReactNode }) {
+  return <span className="text-base font-medium text-muted-foreground">{children}</span>
 }
 
 /** Current, mode, lock and schedule: each only when the charger offers it. */
@@ -178,7 +177,7 @@ export function ChargerControls({
               controlId={onLockChange === undefined ? undefined : lockId}
               control={
                 onLockChange === undefined ? (
-                  <StateText on={locked} />
+                  <StateText>{locked ? t('ev.locked') : t('ev.unlocked')}</StateText>
                 ) : (
                   <Switch
                     id={lockId}
@@ -203,7 +202,7 @@ export function ChargerControls({
               controlId={onScheduleChange === undefined ? undefined : scheduleId}
               control={
                 onScheduleChange === undefined ? (
-                  <StateText on={scheduleEnabled} />
+                  <StateText>{scheduleEnabled ? t('common.on') : t('common.off')}</StateText>
                 ) : (
                   <Switch
                     id={scheduleId}

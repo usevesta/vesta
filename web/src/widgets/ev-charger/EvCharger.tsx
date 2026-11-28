@@ -168,8 +168,12 @@ function hasMeters(readings: EnergyReadings | undefined): boolean {
   return [gridW, solarW, batteryW, houseW].some((value) => value !== undefined)
 }
 
-/** The diagram, the session and every control: a big tile, or the dialog. */
-function ChargerDetails(props: EvChargerProps) {
+/**
+ * The diagram, the session and the controls: a big tile, or the dialog.
+ * `settings: 'current'` keeps a stacked tile short enough for a wall
+ * screen: only the charging current, the rest is in the dialog.
+ */
+function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { settings?: 'all' | 'current' }) {
   const { t } = useTranslation()
   const [ref, width] = useElementWidth()
   const { readings, powerW, unavailable = false, status } = props
@@ -180,7 +184,11 @@ function ChargerDetails(props: EvChargerProps) {
   const charging = status === 'charging'
 
   const picture = hasMeters(readings) ? (
-    <EnergyFlow readings={flowReadings} frozen={unavailable} className="mx-auto max-w-[34rem]" />
+    <EnergyFlow
+      readings={flowReadings}
+      frozen={unavailable}
+      className={cn('mx-auto max-w-[34rem]', !sideBySide && 'max-h-60')}
+    />
   ) : (
     <div className="flex flex-col gap-3 py-2">
       <Readout watts={powerW} size="xl" />
@@ -192,7 +200,6 @@ function ChargerDetails(props: EvChargerProps) {
     <div
       ref={ref}
       className={cn(
-        
         sideBySide ? 'grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-center gap-8' : 'flex flex-col gap-5',
       )}
     >
@@ -216,13 +223,17 @@ function ChargerDetails(props: EvChargerProps) {
           currentRange={props.currentRange}
           autoCurrent={props.autoCurrent}
           onCurrentChange={props.onCurrentChange}
-          mode={props.mode}
-          modes={props.modes ?? []}
-          onModeChange={props.onModeChange}
-          locked={props.locked}
-          onLockChange={props.onLockChange}
-          scheduleEnabled={props.scheduleEnabled}
-          onScheduleChange={props.onScheduleChange}
+          {...(settings === 'all'
+            ? {
+                mode: props.mode,
+                modes: props.modes ?? [],
+                onModeChange: props.onModeChange,
+                locked: props.locked,
+                onLockChange: props.onLockChange,
+                scheduleEnabled: props.scheduleEnabled,
+                onScheduleChange: props.onScheduleChange,
+              }
+            : { modes: [] })}
         />
       </section>
     </div>
@@ -254,6 +265,11 @@ export function EvCharger(props: EvChargerProps) {
   } = props
 
   const inline = rows >= 2 || (width !== null && width >= INLINE_MIN_PX)
+  // A stacked big tile shows the current only; the dialog has the rest.
+  const stacked = inline && (width === null || width < SIDE_BY_SIDE_PX)
+  const hasMoreSettings =
+    props.mode !== undefined || props.locked !== undefined || props.scheduleEnabled !== undefined
+  const withDialog = !inline || (stacked && hasMoreSettings)
   const glance = !inline && width !== null && width < STRIP_MIN_PX
   const charging = status === 'charging'
   const key = statusKey(status, waitingFor, locked)
@@ -280,7 +296,7 @@ export function EvCharger(props: EvChargerProps) {
         {paused ? t('ev.resume') : t('ev.pause')}
       </Button>
     )
-  const more = inline ? null : (
+  const more = !withDialog ? null : (
     <Button
       variant="ghost"
       className="size-14 shrink-0 rounded-xl"
@@ -296,7 +312,7 @@ export function EvCharger(props: EvChargerProps) {
 
   let body: ReactNode
   if (inline) {
-    body = <ChargerDetails {...props} />
+    body = <ChargerDetails {...props} settings={stacked ? 'current' : 'all'} />
   } else if (glance) {
     body = (
       <div className="flex flex-col gap-2">
@@ -345,7 +361,7 @@ export function EvCharger(props: EvChargerProps) {
       >
         {body}
       </WidgetFrame>
-      {!inline && (
+      {withDialog && (
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogContent className="max-h-[94dvh] gap-5 overflow-y-auto p-6 sm:max-w-5xl">
             <DialogHeader className="flex-row items-center gap-3 pr-10 text-left">
