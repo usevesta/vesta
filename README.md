@@ -39,11 +39,18 @@ a doorbell that rings every 3 minutes (to see the doorbell screen), two plugs th
 they draw (one of them only watched, so it has no switch), a robot vacuum (the **Plugs & Robot**
 page) and a car charger with solar panels on a compressed day (12 minutes for 24 hours) whose own
 power control keeps the home under its contracted power, and whose charging hours can be changed
-from its settings (the **Energy** page).
+from its settings (the **Energy** page). Like a real charger that does not report its hours, it
+shows them as last read or saved, with where they came from and when ("Hours read from the
+charger just now"), and reads them again when someone opens **Change hours**.
 
 Tap **Edit** on the screen to add, move, resize, rename or remove tiles and to manage pages. With
 `--dev`, changes live in memory only (restarting the hub resets the simulated home); with
 `vesta-hubd --config config.json --dashboard dashboard.json` they are saved back to that file.
+
+Devices keep what they must remember across restarts (for example a charger's last known
+charging hours) in a `state` folder next to the config file, one JSON file per device, or
+wherever `--state-dir <DIR>` says; `--dev` keeps it in memory. These files never hold secrets
+(keys and passwords stay in `config.json`), and one that cannot be read is ignored.
 
 To look at the UI without a hub, open `http://localhost:5173/?demo=1` (a sample home with mock
 state). Add `&lang=es` to force Spanish.
@@ -59,7 +66,7 @@ dev UI (open the same `/api/v1/session?code=…` path on `http://localhost:5173`
 `apps/tauri` is the Tauri v2 app. With `--features hub` it runs the hub in-process and shows the
 wall panel in a native window. Without a home set up (`config.json` + `dashboard.json` in the
 app data folder, e.g. `~/Library/Application Support/com.usevesta.app/` on macOS) it runs the
-simulated home.
+simulated home. With a home set up, devices keep their state in `state/` in that same folder.
 
 ```sh
 cd web && pnpm install && cd ../apps/tauri && pnpm install
@@ -131,7 +138,7 @@ Each kind of device has its own driver crate in `crates/drivers/`, enabled by a 
 | `driver` | Devices | Notes |
 |---|---|---|
 | `sim` | the simulated home | `vesta-hubd --dev`, demos and tests |
-| `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. Optional `cloud_api_key`: change the charging hours from the panel (stored in the charger through V2C's cloud, only when saved). See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
+| `v2c` | V2C Trydan EV chargers (local HTTP API) | charger plus grid, house, solar and battery readings; never touches the charger's contracted-power settings. Optional `cloud_api_key`: see and change the charging hours from the panel (stored in the charger through V2C's cloud when saved; read from it when someone opens the hours editor, at most every 30 s, never on a timer). See [`crates/drivers/vesta-driver-v2c/README.md`](crates/drivers/vesta-driver-v2c/README.md) |
 | `tuya` | Tuya / Smart Life plugs, switches and robot vacuums (local protocol 3.3, 3.4, 3.5) | found on the network by their own broadcasts; each needs its local key. See [`crates/drivers/vesta-driver-tuya/README.md`](crates/drivers/vesta-driver-tuya/README.md) |
 
 `config.example.json` shows one of each (with placeholder addresses and keys). Real `config.json`

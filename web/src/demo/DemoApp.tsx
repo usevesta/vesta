@@ -29,6 +29,7 @@ import {
   DEMO_CHARGER_MODES,
   DEMO_CURRENT_RANGE,
   DEMO_SCHEDULE_FEATURES,
+  refreshDemoSchedule,
   saveDemoSchedule,
   startDemoCharger,
   useDemoCharger,
@@ -171,6 +172,7 @@ function demoSpec(
           onLockChange: (locked) => run(label, changeDemoCharger({ locked })),
           onScheduleChange: (enabled) => run(label, changeDemoCharger({ scheduleEnabled: enabled })),
           onChargingScheduleChange: (schedule) => run(label, saveDemoSchedule(schedule)),
+          onRefreshChargingSchedule: () => refreshDemoSchedule(),
         },
       }
     case 'plug': {

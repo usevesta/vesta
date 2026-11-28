@@ -4,6 +4,7 @@
 //! ```sh
 //! cargo run -p vesta-hubd -- --dev                      # simulated home, no sign-in, edits in memory
 //! vesta-hubd --config config.json --dashboard dashboard.json --ui web/dist
+//! vesta-hubd --config c.json --dashboard d.json --state-dir /var/lib/vesta/state
 //! vesta-hubd tuya-import devices.json --out config.json # add Tuya devices (writes their keys!)
 //! ```
 //!
@@ -25,12 +26,16 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 use vesta_core::{Dashboard, HubConfig};
 use vesta_drivers::Registry;
-use vesta_hub::{ApiAuth, Hub, HubOptions, JsonFileStore, LOGIN_CODE_TTL, UiFiles, bind_loopback};
+use vesta_hub::{
+    ApiAuth, Hub, HubOptions, JsonFileStore, LOGIN_CODE_TTL, StateStorage, UiFiles, bind_loopback,
+};
 
 /// The simulated home used by `--dev`. No secrets: every device uses the
 /// `sim` driver.
 const DEV_CONFIG: &str = vesta_drivers::demo::CONFIG;
 const DEV_DASHBOARD: &str = vesta_drivers::demo::DASHBOARD;
+/// The devices' state, next to the config file unless `--state-dir` says.
+const DEFAULT_STATE_DIR: &str = "state";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -81,6 +86,13 @@ struct Args {
     /// `http://localhost:5173` for the Vite dev UI. Repeatable.
     #[arg(long, value_name = "ORIGIN", conflicts_with = "dev")]
     allow_origin: Vec<String>,
+
+    /// Where devices keep what they must remember across restarts (e.g. a
+    /// charger's last known hours): one JSON file per device, never
+    /// secrets. Default: a `state` folder next to the config file. `--dev`
+    /// keeps it in memory.
+    #[arg(long, value_name = "DIR", conflicts_with = "dev")]
+    state_dir: Option<PathBuf>,
 }
 
 /// One-off tools; without one, the hub runs.
@@ -119,6 +131,21 @@ fn load(args: &Args) -> anyhow::Result<(HubConfig, Dashboard)> {
     Ok((config, dashboard))
 }
 
+/// Where drivers keep their per-device state: `--state-dir`, else `state/`
+/// next to the config file; in memory with `--dev`.
+fn driver_state(args: &Args) -> StateStorage {
+    match (&args.state_dir, &args.config) {
+        (Some(dir), _) => StateStorage::Dir(dir.clone()),
+        (None, Some(config)) => StateStorage::Dir(
+            config
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(DEFAULT_STATE_DIR),
+        ),
+        (None, None) => StateStorage::Memory,
+    }
+}
+
 fn options(args: &Args) -> anyhow::Result<HubOptions> {
     let ui = match &args.ui {
         Some(dir) => {
@@ -137,6 +164,7 @@ fn options(args: &Args) -> anyhow::Result<HubOptions> {
         },
         allowed_origins: args.allow_origin.clone(),
         ui,
+        driver_state: driver_state(args),
         ..HubOptions::default()
     })
 }
@@ -191,9 +219,16 @@ async fn main() -> anyhow::Result<()> {
     if args.dev {
         tracing::info!("running the simulated home (--dev)");
     }
+    let options = options(&args)?;
+    match &options.driver_state {
+        StateStorage::Dir(dir) => {
+            tracing::info!(dir = %dir.display(), "devices keep their state here")
+        }
+        StateStorage::Memory => tracing::info!("devices keep their state in memory (--dev)"),
+    }
     let addr = SocketAddr::new(config.hub.bind_address, config.hub.port);
 
-    let mut hub = Hub::start(&config, dashboard, &Registry::builtin(), options(&args)?).await?;
+    let mut hub = Hub::start(&config, dashboard, &Registry::builtin(), options).await?;
     // `--dev` keeps edits in memory: a restart resets the simulated home.
     if let Some(path) = &args.dashboard {
         hub = hub.with_dashboard_store(JsonFileStore::new(path));
@@ -307,6 +342,44 @@ mod tests {
     }
 
     #[test]
+    fn device_state_lives_next_to_the_config_unless_told() {
+        let parse = |args: &[&str]| Args::try_parse_from(args).unwrap();
+        let next_to = parse(&[
+            "vesta-hubd",
+            "--config",
+            "/etc/vesta/config.json",
+            "--dashboard",
+            "/etc/vesta/dashboard.json",
+        ]);
+        assert_eq!(
+            options(&next_to).unwrap().driver_state,
+            StateStorage::Dir(PathBuf::from("/etc/vesta/state"))
+        );
+        let here = parse(&["vesta-hubd", "--config", "c.json", "--dashboard", "d.json"]);
+        assert_eq!(
+            driver_state(&here),
+            StateStorage::Dir(PathBuf::from("state"))
+        );
+        let elsewhere = parse(&[
+            "vesta-hubd",
+            "--config",
+            "c.json",
+            "--dashboard",
+            "d.json",
+            "--state-dir",
+            "/var/lib/vesta",
+        ]);
+        assert_eq!(
+            driver_state(&elsewhere),
+            StateStorage::Dir(PathBuf::from("/var/lib/vesta"))
+        );
+        // `--dev` keeps it in memory, and cannot be pointed at a folder.
+        let dev = parse(&["vesta-hubd", "--dev"]);
+        assert_eq!(options(&dev).unwrap().driver_state, StateStorage::Memory);
+        assert!(Args::try_parse_from(["vesta-hubd", "--dev", "--state-dir", "/tmp/x"]).is_err());
+    }
+
+    #[test]
     fn dev_fixtures_describe_the_simulated_home() {
         let args = Args::try_parse_from(["vesta-hubd", "--dev"]).unwrap();
         let (config, dashboard) = load(&args).unwrap();
@@ -318,7 +391,12 @@ mod tests {
         let registry = Registry::builtin();
         let mut targets = BTreeSet::new();
         for device in &config.devices {
-            for endpoint in registry.build(device).unwrap().describe().endpoints {
+            for endpoint in registry
+                .build(device, &vesta_core::DriverContext::in_memory())
+                .unwrap()
+                .describe()
+                .endpoints
+            {
                 targets.insert(format!("{}/{}", device.id, endpoint.id));
             }
         }

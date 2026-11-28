@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use vesta_core::{
     AvailabilityChange, BusEvent, CapabilityState, DeviceId, EvChargeMode, EvChargerState,
-    EvChargerStatus, StateChange, Weekday,
+    EvChargerStatus, MemoryState, StateChange, Weekday,
 };
 
 use super::*;
@@ -148,6 +148,7 @@ fn fast_timing() -> Timing {
         command_budget: Duration::from_millis(1_500),
         cloud_timeout: Duration::from_millis(400),
         schedule_budget: Duration::from_millis(3_000),
+        read_every: Duration::from_millis(400),
     }
 }
 
@@ -159,8 +160,24 @@ fn driver_with(config: Value, scan: Scan) -> Arc<V2cDriver> {
 }
 
 fn driver_with_cloud(config: Value, scan: Scan, cloud: &str) -> Arc<V2cDriver> {
+    driver_full(
+        config,
+        scan,
+        cloud,
+        fast_timing(),
+        DriverContext::in_memory(),
+    )
+}
+
+fn driver_full(
+    config: Value,
+    scan: Scan,
+    cloud: &str,
+    timing: Timing,
+    context: DriverContext,
+) -> Arc<V2cDriver> {
     let config = V2cConfig::from_value(&config).unwrap();
-    Arc::new(V2cDriver::build(config, fast_timing(), scan, cloud).unwrap())
+    Arc::new(V2cDriver::build(config, timing, scan, cloud, context).unwrap())
 }
 
 fn driver(config: Value) -> Arc<V2cDriver> {
@@ -304,7 +321,8 @@ fn the_config_example_builds_a_charger() {
     let devices = example["devices"].as_array().unwrap();
     let chargers: Vec<_> = devices.iter().filter(|d| d["driver"] == "v2c").collect();
     assert_eq!(chargers.len(), 1);
-    let driver = V2cDriver::from_config(&chargers[0]["config"]).unwrap();
+    let driver =
+        V2cDriver::from_config(&chargers[0]["config"], &DriverContext::in_memory()).unwrap();
     assert_eq!(driver.config().host, "192.0.2.10");
     assert_eq!(driver.describe().endpoints.len(), 3);
 }
@@ -629,6 +647,7 @@ async fn read_only_never_sends_anything() {
             enabled: true,
             windows: vec![night()],
         },
+        EvChargerCommand::RefreshChargingSchedule,
     ] {
         assert!(
             matches!(
@@ -816,11 +835,12 @@ fn no_command_can_touch_the_chargers_safety_settings() {
         EvChargerCommand::Unlock,
         EvChargerCommand::SetSchedule { enabled: true },
         EvChargerCommand::SetSchedule { enabled: false },
-        // Not a local write at all (see the cloud guard below).
+        // Not local writes at all (see the cloud guard below).
         EvChargerCommand::SetChargingSchedule {
             enabled: true,
             windows: vec![night()],
         },
+        EvChargerCommand::RefreshChargingSchedule,
     ];
     for mode in [
         EvChargeMode::Manual,
@@ -1066,6 +1086,14 @@ async fn cloud_handler(
 /// A running driver with a cloud key, connected to a mocked charger and a
 /// mocked cloud, past its first reading.
 async fn with_cloud(config: Value) -> (Mock, CloudMock, Arc<V2cDriver>, Running) {
+    with_cloud_and(config, fast_timing(), DriverContext::in_memory()).await
+}
+
+async fn with_cloud_and(
+    config: Value,
+    timing: Timing,
+    context: DriverContext,
+) -> (Mock, CloudMock, Arc<V2cDriver>, Running) {
     let mock = Mock::start(sample()).await;
     let cloud = CloudMock::start().await;
     let mut config = config;
@@ -1073,11 +1101,45 @@ async fn with_cloud(config: Value) -> (Mock, CloudMock, Arc<V2cDriver>, Running)
     if config.get("cloud_api_key").is_none() {
         config["cloud_api_key"] = json!(CLOUD_KEY);
     }
-    let charger = driver_with_cloud(config, Scan::Fixed(Vec::new()), &cloud.base());
+    let charger = driver_full(
+        config,
+        Scan::Fixed(Vec::new()),
+        &cloud.base(),
+        timing,
+        context,
+    );
     let mut running = run(&charger);
     assert!(running.availability().await);
     running.charger().await;
     (mock, cloud, charger, running)
+}
+
+fn refresh() -> Command {
+    ev(EvChargerCommand::RefreshChargingSchedule)
+}
+
+/// State kept in memory, shared between a test and its drivers.
+fn shared_state() -> (Arc<MemoryState>, DriverContext) {
+    let state = Arc::new(MemoryState::new());
+    let context = DriverContext::new(Arc::clone(&state) as Arc<dyn vesta_core::DriverState>);
+    (state, context)
+}
+
+/// The next charger state that carries charging hours.
+async fn schedule_of(running: &mut Running) -> ChargingSchedule {
+    loop {
+        if let Some(schedule) = running.charger().await.charging_schedule {
+            return schedule;
+        }
+    }
+}
+
+/// Like the charger's own app changed its timers.
+fn set_elsewhere(cloud: &CloudMock, timers: Value) {
+    let mut reported = cloud.state.reported.lock().unwrap();
+    for (key, value) in timers.as_object().unwrap() {
+        reported[key] = value.clone();
+    }
 }
 
 fn save(enabled: bool, windows: Vec<ChargingWindow>) -> Command {
@@ -1107,6 +1169,7 @@ fn charging_hours_are_editable_only_with_a_cloud_key() {
         "the local API does not report them"
     );
     assert!(features.saving_needs_internet);
+    assert!(features.refreshable, "read from the cloud when asked");
     let watched =
         driver(json!({ "host": "192.0.2.10", "cloud_api_key": CLOUD_KEY, "read_only": true }));
     assert_eq!(schedule_features(&watched), None);
@@ -1161,13 +1224,12 @@ async fn saves_charging_hours_in_the_charger_through_the_cloud() {
     assert_eq!(mock.writes(), ["/write/Timer=1"]);
     let state = running.charger().await;
     assert_eq!(state.schedule_enabled, Some(true));
-    assert_eq!(
-        state.charging_schedule,
-        Some(ChargingSchedule {
-            enabled: true,
-            windows: vec![night()]
-        })
-    );
+    let schedule = state.charging_schedule.unwrap();
+    assert!(schedule.enabled);
+    assert_eq!(schedule.windows, [night()]);
+    let origin = schedule.origin.unwrap();
+    assert_eq!(origin.source, ScheduleSource::Saved);
+    assert!(!origin.restored);
 }
 
 #[tokio::test]
@@ -1219,7 +1281,7 @@ async fn cloud_errors_change_nothing_on_the_charger() {
         assert!(!error.to_string().contains("ABC123"), "{error}");
         assert_eq!(cloud.calls().len(), 1, "{status}: stops at the first error");
         assert!(mock.writes().is_empty(), "{status}: Timer untouched");
-        assert_eq!(*lock(&charger.saved_windows), None);
+        assert_eq!(charger.known_schedule(), None);
     }
 }
 
@@ -1262,7 +1324,7 @@ async fn a_charger_that_did_not_take_the_hours_is_an_error() {
         .unwrap_err();
     assert!(error.to_string().contains("did not take"), "{error}");
     assert!(mock.writes().is_empty());
-    assert_eq!(*lock(&charger.saved_windows), None);
+    assert_eq!(charger.known_schedule(), None);
 
     // A read-back that says nothing: the write is trusted.
     cloud.state.silent.store(true, Ordering::SeqCst);
@@ -1336,9 +1398,10 @@ async fn a_cloud_that_never_answers_gives_up_within_the_budget() {
 }
 
 /// AGENTS.md rule 7 for the cloud: whatever is asked, the only requests
-/// that ever reach it are timer writes and the read-back, and only for a
-/// `set_charging_schedule`. Never the contracted power, the dynamic power
-/// control, the current limits or anything else.
+/// that ever reach it are timer writes, the read-back after them, and the
+/// read someone asks for (`refresh_charging_schedule`). Never the
+/// contracted power, the dynamic power control, the current limits or
+/// anything else, and nothing at all while the charger just runs.
 #[tokio::test]
 async fn the_cloud_only_ever_gets_timers() {
     use Weekday::*;
@@ -1350,9 +1413,23 @@ async fn the_cloud_only_ever_gets_timers() {
     let config = json!({
         "host": mock.host(), "cloud_api_key": CLOUD_KEY, "meters": { "solar": true }
     });
-    let charger = driver_with_cloud(config, Scan::Fixed(Vec::new()), &cloud.base());
+    // Every read asked for really goes out, so each one is counted.
+    let timing = Timing {
+        read_every: Duration::ZERO,
+        ..fast_timing()
+    };
+    let charger = driver_full(
+        config,
+        Scan::Fixed(Vec::new()),
+        &cloud.base(),
+        timing,
+        DriverContext::in_memory(),
+    );
     let mut running = run(&charger);
     running.charger().await;
+    // Running by itself: never the cloud.
+    running.drain(Duration::from_millis(300)).await;
+    assert!(cloud.calls().is_empty(), "{:?}", cloud.calls());
 
     let mut commands = vec![
         EvChargerCommand::Pause,
@@ -1384,24 +1461,47 @@ async fn the_cloud_only_ever_gets_timers() {
             });
         }
     }
+    // A read after every command, and a few in a row.
+    let mut all = Vec::new();
     for cmd in commands {
+        all.push(cmd);
+        all.push(EvChargerCommand::RefreshChargingSchedule);
+    }
+    all.extend(std::iter::repeat_n(
+        EvChargerCommand::RefreshChargingSchedule,
+        3,
+    ));
+    let reads = all
+        .iter()
+        .filter(|cmd| **cmd == EvChargerCommand::RefreshChargingSchedule)
+        .count();
+    for cmd in all {
         let _ = charger.execute(&charger_ep(), ev(cmd)).await;
     }
+
     let calls = cloud.calls();
-    assert_eq!(calls.len(), saves.len() * 2 * 3, "{calls:?}");
+    assert_eq!(calls.len(), saves.len() * 2 * 3 + reads, "{calls:?}");
     for call in &calls {
+        let mut query: Vec<&str> = call.query.iter().map(|(k, _)| k.as_str()).collect();
+        query.sort_unstable();
+        assert_eq!(call.key.as_deref(), Some(CLOUD_KEY));
         match (call.method.as_str(), call.path.as_str()) {
             ("POST", "/device/timer") => {
+                assert_eq!(query, ["deviceId", "timerId"]);
                 let body = call.body.as_ref().unwrap().as_object().unwrap();
                 let mut keys: Vec<&str> = body.keys().map(String::as_str).collect();
                 keys.sort_unstable();
                 assert_eq!(keys, ["daysOfWeek", "timeEnd", "timeStart"]);
             }
-            ("GET", "/device/reported") => assert!(call.body.is_none()),
+            ("GET", "/device/reported") => {
+                assert_eq!(query, ["deviceId"]);
+                assert!(call.body.is_none());
+            }
             other => panic!("the cloud got {other:?}"),
         }
     }
-    // Locally, still only the allowed writes.
+    // Locally, still only the allowed writes, and reading the hours wrote
+    // nothing.
     for path in mock.writes() {
         let key = path
             .trim_start_matches("/write/")
@@ -1414,4 +1514,307 @@ async fn the_cloud_only_ever_gets_timers() {
             "{path}"
         );
     }
+    let timers = mock
+        .writes()
+        .iter()
+        .filter(|path| path.starts_with("/write/Timer="))
+        .count();
+    assert_eq!(
+        timers,
+        2 + saves.len() * 2,
+        "one Timer write per on/off and per save"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Charging hours, read from the cloud when someone asks
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn reads_the_hours_set_on_the_charger_when_asked() {
+    use Weekday::*;
+    let (state, context) = shared_state();
+    let (mock, cloud, charger, mut running) =
+        with_cloud_and(json!({}), fast_timing(), context).await;
+    // Unknown until read or saved; running never asks the cloud.
+    running.drain(Duration::from_millis(300)).await;
+    assert!(cloud.calls().is_empty());
+    assert_eq!(charger.known_schedule(), None);
+
+    // Changed in V2C's own app.
+    set_elsewhere(
+        &cloud,
+        json!({
+            "programed": 1,
+            "hourstart_00": 1, "minutestart_00": 30, "hourend_00": 7, "minuteend_00": 0,
+            "daysofweek_00": "135",
+            "hourstart_01": 1, "minutestart_01": 30, "hourend_01": 7, "minuteend_01": 0,
+            "daysofweek_01": "135"
+        }),
+    );
+    charger.execute(&charger_ep(), refresh()).await.unwrap();
+    let calls = cloud.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        (calls[0].method.as_str(), calls[0].path.as_str()),
+        ("GET", "/device/reported")
+    );
+    assert_eq!(
+        calls[0].query,
+        [("deviceId".to_owned(), "ABC123".to_owned())]
+    );
+    // On screen before the command returns: the same hours twice are
+    // shown once.
+    let schedule = schedule_of(&mut running).await;
+    assert_eq!(
+        schedule.windows,
+        [window("01:30", "07:00", &[Monday, Wednesday, Friday])]
+    );
+    assert_eq!(
+        schedule.enabled,
+        sample()["Timer"] == json!(1),
+        "on/off comes from the charger itself"
+    );
+    let origin = schedule.origin.unwrap();
+    assert_eq!(origin.source, ScheduleSource::Charger);
+    assert!(!origin.restored);
+    // Kept for the next start; nothing written to the charger.
+    assert_eq!(state.values().len(), 1);
+    assert!(mock.writes().is_empty());
+
+    // No hours set at all.
+    tokio::time::sleep(fast_timing().read_every).await;
+    set_elsewhere(
+        &cloud,
+        json!({ "daysofweek_00": "8", "daysofweek_01": "8" }),
+    );
+    charger.execute(&charger_ep(), refresh()).await.unwrap();
+    let none = loop {
+        let schedule = schedule_of(&mut running).await;
+        if schedule.windows.is_empty() {
+            break schedule;
+        }
+    };
+    assert_eq!(none.origin.unwrap().source, ScheduleSource::Charger);
+}
+
+#[tokio::test]
+async fn reads_the_cloud_at_most_once_per_interval() {
+    let (_mock, cloud, charger, _running) = with_cloud(json!({})).await;
+    for _ in 0..5 {
+        charger.execute(&charger_ep(), refresh()).await.unwrap();
+    }
+    assert_eq!(cloud.calls().len(), 1, "asked five times, read once");
+    tokio::time::sleep(fast_timing().read_every).await;
+    charger.execute(&charger_ep(), refresh()).await.unwrap();
+    assert_eq!(cloud.calls().len(), 2);
+
+    // A save reads the hours back: a read right after needs no call.
+    tokio::time::sleep(fast_timing().read_every).await;
+    charger
+        .execute(&charger_ep(), save(true, vec![night()]))
+        .await
+        .unwrap();
+    let after_save = cloud.calls().len();
+    charger.execute(&charger_ep(), refresh()).await.unwrap();
+    assert_eq!(cloud.calls().len(), after_save);
+    assert_eq!(
+        charger.known_schedule().unwrap().origin.source,
+        ScheduleSource::Saved
+    );
+}
+
+#[tokio::test]
+async fn failed_reads_change_nothing_and_never_say_the_key() {
+    for status in [401, 403, 429, 500, 400] {
+        let (mock, cloud, charger, _running) = with_cloud(json!({})).await;
+        cloud.set_status(status);
+        let error = charger.execute(&charger_ep(), refresh()).await.unwrap_err();
+        assert!(
+            matches!(error, DriverError::Protocol(_)),
+            "{status}: {error:?}"
+        );
+        for secret in [CLOUD_KEY, "ABC123", mock.host().as_str()] {
+            assert!(!error.to_string().contains(secret), "{error}");
+        }
+        assert_eq!(charger.known_schedule(), None);
+        // Asking again at once does not spend another call (the daily
+        // limit), and still says it did not work.
+        assert!(charger.execute(&charger_ep(), refresh()).await.is_err());
+        assert_eq!(cloud.calls().len(), 1, "{status}");
+        assert!(mock.writes().is_empty());
+    }
+
+    // An answer without the timers.
+    let (_mock, cloud, charger, _running) = with_cloud(json!({})).await;
+    cloud.state.silent.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        charger.execute(&charger_ep(), refresh()).await,
+        Err(DriverError::Protocol(_))
+    ));
+    assert_eq!(charger.known_schedule(), None);
+
+    // No internet: an error, not "the charger is not responding".
+    let mock = Mock::start(sample()).await;
+    let config = json!({ "host": mock.host(), "cloud_api_key": CLOUD_KEY });
+    let dead = format!("http://{}", dead_host().await);
+    let charger = driver_with_cloud(config, Scan::Fixed(Vec::new()), &dead);
+    let mut running = run(&charger);
+    running.charger().await;
+    let error = charger.execute(&charger_ep(), refresh()).await.unwrap_err();
+    assert!(matches!(error, DriverError::Protocol(_)), "{error:?}");
+    assert!(!error.to_string().contains(CLOUD_KEY));
+}
+
+#[tokio::test]
+async fn without_a_key_the_hours_are_never_read() {
+    let (mock, charger, _running) = connected(json!({}), sample()).await;
+    assert!(matches!(
+        charger.execute(&charger_ep(), refresh()).await,
+        Err(DriverError::Unsupported)
+    ));
+    assert!(mock.writes().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Charging hours, kept across restarts
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_last_known_hours_come_back_after_a_restart() {
+    let (state, context) = shared_state();
+    let (_mock, cloud, charger, _running) =
+        with_cloud_and(json!({}), fast_timing(), context.clone()).await;
+    charger
+        .execute(&charger_ep(), save(true, vec![night()]))
+        .await
+        .unwrap();
+    let saved = charger.known_schedule().unwrap();
+    drop(charger);
+
+    // The Hub restarts: same state, a new driver.
+    let mock = Mock::start(sample()).await;
+    let config = json!({ "host": mock.host(), "cloud_api_key": CLOUD_KEY });
+    let calls = cloud.calls().len();
+    let again = driver_full(
+        config,
+        Scan::Fixed(Vec::new()),
+        &cloud.base(),
+        fast_timing(),
+        context,
+    );
+    let mut running = run(&again);
+    let schedule = schedule_of(&mut running).await;
+    assert_eq!(schedule.windows, [night()]);
+    let origin = schedule.origin.unwrap();
+    assert!(origin.restored, "marked as the last known hours");
+    assert_eq!(origin.source, ScheduleSource::Saved);
+    assert_eq!(origin.at, saved.origin.at);
+    assert_eq!(cloud.calls().len(), calls, "restoring never asks the cloud");
+    assert_eq!(state.values().len(), 1);
+
+    // Reading them again makes them current.
+    again.execute(&charger_ep(), refresh()).await.unwrap();
+    let origin = again.known_schedule().unwrap().origin;
+    assert!(!origin.restored);
+    assert_eq!(origin.source, ScheduleSource::Charger);
+}
+
+#[tokio::test]
+async fn unreadable_or_unusable_kept_hours_are_ignored() {
+    let key = StateKey::new("charging_schedule").unwrap();
+    let kept = json!({
+        "windows": [{ "start": "22:00", "end": "06:00", "days": ["monday"] }],
+        "source": "saved", "at": "2026-11-28T09:30:00Z"
+    });
+    let restored = |value: Value, config: Value| {
+        let context =
+            DriverContext::new(Arc::new(MemoryState::with_values([(key.clone(), value)])));
+        driver_full(
+            config,
+            Scan::Fixed(Vec::new()),
+            NO_CLOUD,
+            fast_timing(),
+            context,
+        )
+        .known_schedule()
+    };
+    let keyed = json!({ "host": "192.0.2.10", "cloud_api_key": CLOUD_KEY });
+    let known = restored(kept.clone(), keyed.clone()).unwrap();
+    assert!(known.origin.restored);
+    assert_eq!(known.origin.at.to_string(), "2026-11-28T09:30:00Z");
+    for broken in [
+        json!("not hours"),
+        json!({ "windows": [], "source": "elsewhere", "at": "2026-11-28T09:30:00Z" }),
+        json!({ "windows": [{ "start": "25:00", "end": "06:00", "days": [] }],
+                "source": "saved", "at": "2026-11-28T09:30:00Z" }),
+        json!({ "windows": [kept["windows"][0], kept["windows"][0], kept["windows"][0]],
+                "source": "saved", "at": "2026-11-28T09:30:00Z" }),
+    ] {
+        assert_eq!(restored(broken.clone(), keyed.clone()), None, "{broken}");
+    }
+    // Without a key, or monitoring only, the hours are not shown at all.
+    assert_eq!(
+        restored(kept.clone(), json!({ "host": "192.0.2.10" })),
+        None
+    );
+    let watched = json!({ "host": "192.0.2.10", "cloud_api_key": CLOUD_KEY, "read_only": true });
+    assert_eq!(restored(kept, watched), None);
+}
+
+/// The device's state holds device data only: never the cloud key, the
+/// charger's ID or its address.
+#[tokio::test]
+async fn the_kept_state_never_holds_secrets() {
+    let (state, context) = shared_state();
+    let (mock, cloud, charger, _running) = with_cloud_and(
+        json!({ "charger_id": "ABC123" }),
+        Timing {
+            read_every: Duration::ZERO,
+            ..fast_timing()
+        },
+        context,
+    )
+    .await;
+    charger
+        .execute(&charger_ep(), save(true, vec![night()]))
+        .await
+        .unwrap();
+    let kept_json = || {
+        let map: serde_json::Map<String, Value> = state
+            .values()
+            .into_iter()
+            .map(|(key, value)| (key.as_str().to_owned(), value))
+            .collect();
+        Value::Object(map).to_string()
+    };
+    let after_save = kept_json();
+    set_elsewhere(
+        &cloud,
+        json!({ "hourstart_01": 3, "minutestart_01": 0, "hourend_01": 5, "minuteend_01": 0,
+                "daysofweek_01": "67" }),
+    );
+    charger.execute(&charger_ep(), refresh()).await.unwrap();
+    let after_read = kept_json();
+    for kept in [&after_save, &after_read] {
+        for secret in [
+            CLOUD_KEY,
+            "ABC123",
+            mock.host().as_str(),
+            "127.0.0.1",
+            "apikey",
+        ] {
+            assert!(!kept.contains(secret), "{secret} in {kept}");
+        }
+        let value: Value = serde_json::from_str(kept).unwrap();
+        let mut keys: Vec<&str> = value["charging_schedule"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["at", "source", "windows"], "{kept}");
+    }
+    assert!(after_read.contains("\"charger\""), "{after_read}");
 }

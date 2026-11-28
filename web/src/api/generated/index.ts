@@ -88,6 +88,8 @@ export type * from "./RobotVacuumFeatures";
 export type * from "./RobotVacuumState";
 export type * from "./RobotVacuumStatus";
 export type * from "./RoomId";
+export type * from "./ScheduleOrigin";
+export type * from "./ScheduleSource";
 export type * from "./ServerMessage";
 export type * from "./Snapshot";
 export type * from "./StateChange";

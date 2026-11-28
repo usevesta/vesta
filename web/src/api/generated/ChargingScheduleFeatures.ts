@@ -25,13 +25,21 @@ overnight: boolean,
  */
 editable: boolean, 
 /**
- * The charger reports its hours. When `false`, `state.charging_schedule`
- * holds the hours last saved from VESTA (they may have been changed
- * elsewhere since) and is omitted until then.
+ * The charger reports its hours by itself, so they are always current.
+ * When `false`, `state.charging_schedule` holds the last hours VESTA
+ * knows (read on request or saved from VESTA; see its `origin`), which
+ * may have been changed elsewhere since, and is omitted until then.
  */
 reports_windows: boolean, 
 /**
  * Saving the hours needs the home's internet connection. Switching the
  * schedule on and off (`set_schedule`) and following it do not.
  */
-saving_needs_internet: boolean, };
+saving_needs_internet: boolean, 
+/**
+ * `refresh_charging_schedule` works: VESTA can read the hours from the
+ * charger, once, when someone asks (e.g. opens the hours editor). Only
+ * for chargers that do not report them by themselves; it may need the
+ * internet like saving does.
+ */
+refreshable: boolean, };

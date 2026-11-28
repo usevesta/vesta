@@ -86,9 +86,9 @@ function bindKnown(
   const target = view?.target
   // Callbacks hand the outcome back, so the control that sent it is busy
   // until the home answered (see `useCommand`).
-  const run = (command: Command, confirmed = false): Promise<CommandOutcome> | undefined => {
+  const run = (command: Command, confirmed = false, quiet = false): Promise<CommandOutcome> | undefined => {
     if (target === undefined) return undefined
-    return ctx.send(target, command, { label, confirmed })
+    return ctx.send(target, command, quiet ? { label, confirmed, quiet } : { label, confirmed })
   }
 
   switch (type) {
@@ -330,6 +330,11 @@ function bindKnown(
             features?.charging_schedule?.editable === true
               ? ({ enabled, windows }) =>
                   send({ capability: 'ev_charger', action: 'set_charging_schedule', enabled, windows })
+              : undefined,
+          // Reading the hours: the editor says itself when it did not work.
+          onRefreshChargingSchedule:
+            features?.charging_schedule?.refreshable === true
+              ? () => send({ capability: 'ev_charger', action: 'refresh_charging_schedule' }, false, true)
               : undefined,
         },
       }

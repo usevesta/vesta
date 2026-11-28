@@ -167,6 +167,16 @@ export function chargerDevice(overrides: { online?: boolean } = {}): Device {
               adjustable_current: true,
               lock: true,
               schedule: true,
+              // Hours not reported by the charger: read when asked, or saved.
+              charging_schedule: {
+                max_windows: 2,
+                weekdays: true,
+                overnight: true,
+                editable: true,
+                reports_windows: false,
+                saving_needs_internet: true,
+                refreshable: true,
+              },
             },
             state: {
               status: 'charging',
@@ -181,6 +191,11 @@ export function chargerDevice(overrides: { online?: boolean } = {}): Device {
               mode: 'manual',
               locked: false,
               schedule_enabled: true,
+              charging_schedule: {
+                enabled: true,
+                windows: [{ start: '22:00', end: '06:00', days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] }],
+                origin: { source: 'charger', at: '2026-11-28T09:30:00Z', restored: true },
+              },
             },
           },
         },

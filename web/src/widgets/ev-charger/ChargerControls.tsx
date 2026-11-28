@@ -7,12 +7,12 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import type { CommandHandler } from '@/lib/command-gate'
+import { isPromiseLike, isSuccess, type CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
 import { useCommand } from '@/lib/use-command'
 import { cn } from '@/lib/utils'
 import { formatAmps } from '@/widgets/ev-charger/energy'
-import { ScheduleEditor, ScheduleSummary } from '@/widgets/ev-charger/ScheduleEditor'
+import { HoursOrigin, ScheduleEditor, ScheduleSummary } from '@/widgets/ev-charger/ScheduleEditor'
 import { LabeledSlider } from '@/widgets/parts/LabeledSlider'
 
 export interface CurrentRange {
@@ -44,6 +44,11 @@ export interface ChargerControlsProps {
   scheduleFeatures?: ChargingScheduleFeatures
   /** Present when the hours can be changed from here. */
   onChargingScheduleChange?: CommandHandler<[ChargingSchedule]>
+  /**
+   * Present when the hours can be read from the charger: sent once when
+   * the hours editor opens (never on a timer). A promise keeps it busy.
+   */
+  onRefreshChargingSchedule?: CommandHandler
 }
 
 function SettingRow({
@@ -103,15 +108,32 @@ export function ChargerControls({
   chargingSchedule,
   scheduleFeatures,
   onChargingScheduleChange,
+  onRefreshChargingSchedule,
 }: ChargerControlsProps) {
   const { t, i18n } = useTranslation()
   const lockId = useId()
   const scheduleId = useId()
   const [confirmUnlock, setConfirmUnlock] = useState(false)
   const [editingHours, setEditingHours] = useState(false)
+  const [checkFailed, setCheckFailed] = useState(false)
   const setMode = useCommand(onModeChange)
   const lock = useCommand(onLockChange)
   const schedule = useCommand(onScheduleChange)
+  // Reading the hours from the charger: one at a time, and its outcome
+  // shown next to them (the editor never waits for it).
+  const checkHours = useCommand(
+    onRefreshChargingSchedule === undefined
+      ? undefined
+      : () => {
+          setCheckFailed(false)
+          const result = onRefreshChargingSchedule()
+          if (!isPromiseLike(result)) return result
+          return Promise.resolve(result).then((outcome) => {
+            setCheckFailed(!isSuccess(outcome))
+            return outcome
+          })
+        },
+  )
   const amps = (value: number) => t('ev.amps', { value: formatAmps(value, i18n.language) })
 
   const canSetCurrent = onCurrentChange !== undefined && currentRange !== undefined && !autoCurrent
@@ -241,14 +263,24 @@ export function ChargerControls({
           {scheduleFeatures !== undefined && (
             <div className="flex flex-col gap-2 pl-13" data-slot="charging-hours">
               {chargingSchedule === undefined ? (
-                <p className="text-sm leading-snug text-muted-foreground">{t('ev.hours.unknown')}</p>
+                checkHours.busy ? null : (
+                  <p className="text-sm leading-snug text-muted-foreground">
+                    {scheduleFeatures.refreshable ? t('ev.hours.unknownAsk') : t('ev.hours.unknown')}
+                  </p>
+                )
               ) : (
-                <>
-                  <ScheduleSummary windows={chargingSchedule.windows} />
-                  {!scheduleFeatures.reports_windows && (
-                    <p className="text-sm leading-snug text-muted-foreground">{t('ev.hours.savedHere')}</p>
-                  )}
-                </>
+                <ScheduleSummary windows={chargingSchedule.windows} />
+              )}
+              {!scheduleFeatures.reports_windows && (
+                <HoursOrigin
+                  origin={chargingSchedule?.origin}
+                  checking={checkHours.busy}
+                  checkFailed={checkFailed}
+                  known={chargingSchedule !== undefined}
+                />
+              )}
+              {chargingSchedule?.origin !== undefined && !scheduleFeatures.refreshable && (
+                <p className="text-sm leading-snug text-muted-foreground">{t('ev.hours.otherAppHint')}</p>
               )}
               {scheduleFeatures.editable && onChargingScheduleChange !== undefined && (
                 <Button
@@ -258,6 +290,9 @@ export function ChargerControls({
                   aria-label={t('ev.hours.changeLabel', { name: label })}
                   onClick={() => {
                     setEditingHours(true)
+                    // The hours set on the charger now (also those changed
+                    // in its own app), once per opening.
+                    checkHours.run()
                   }}
                 >
                   <Icon name="edit" className="size-5" />
@@ -277,6 +312,8 @@ export function ChargerControls({
           features={scheduleFeatures}
           schedule={chargingSchedule}
           enabled={scheduleEnabled ?? chargingSchedule?.enabled ?? false}
+          checking={checkHours.busy}
+          checkFailed={checkFailed}
           onSave={onChargingScheduleChange}
         />
       )}

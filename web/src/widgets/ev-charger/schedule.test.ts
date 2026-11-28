@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import type { ChargingScheduleFeatures, ChargingWindow } from '@/api/generated'
 import {
+  ageOf,
   daysSummary,
   formatTime,
   isOvernight,
   minutesOf,
   newWindow,
+  originKey,
+  sameHours,
   scheduleProblem,
   toggleDay,
   uniqueWindows,
@@ -20,6 +23,7 @@ const FEATURES: ChargingScheduleFeatures = {
   editable: true,
   reports_windows: false,
   saving_needs_internet: true,
+  refreshable: true,
 }
 
 const night: ChargingWindow = { start: '22:00', end: '06:00', days: ['monday', 'friday'] }
@@ -66,5 +70,36 @@ describe('charging hours', () => {
 
   it('shows the same hours twice only once', () => {
     expect(uniqueWindows([night, { ...night, days: ['friday', 'monday'] }, newWindow()])).toEqual([night, newWindow()])
+  })
+
+  it('knows when the hours on screen changed, order and repeats aside', () => {
+    const weekend: ChargingWindow = { start: '10:00', end: '14:00', days: ['saturday', 'sunday'] }
+    expect(sameHours([night, weekend], [weekend, { ...night, days: ['friday', 'monday'] }, night])).toBe(true)
+    expect(sameHours([night], [night, weekend])).toBe(false)
+    expect(sameHours([night], [{ ...night, end: '06:30' }])).toBe(false)
+    expect(sameHours([], [])).toBe(true)
+  })
+
+  it('says where the hours came from', () => {
+    const at = '2026-11-28T09:30:00Z'
+    expect(originKey({ source: 'charger', at, restored: false })).toBe('ev.hours.origin.charger')
+    expect(originKey({ source: 'saved', at, restored: false })).toBe('ev.hours.origin.saved')
+    expect(originKey({ source: 'charger', at, restored: true })).toBe('ev.hours.origin.restoredCharger')
+    expect(originKey({ source: 'saved', at, restored: true })).toBe('ev.hours.origin.restoredSaved')
+  })
+
+  it('says how long ago in plain words', () => {
+    const now = new Date('2026-11-28T12:00:00Z')
+    const ago = (at: string, language = 'en') => ageOf(at, now, language)
+    expect(ago('2026-11-28T11:59:30Z')).toEqual({ key: 'ev.hours.justNow' })
+    // A clock a little ahead is still "just now".
+    expect(ago('2026-11-28T12:00:20Z')).toEqual({ key: 'ev.hours.justNow' })
+    expect(ago('2026-11-28T11:55:00Z')).toEqual({ text: '5 minutes ago' })
+    expect(ago('2026-11-28T11:55:00Z', 'es')).toEqual({ text: 'hace 5 minutos' })
+    expect(ago('2026-11-28T09:00:00Z')).toEqual({ text: '3 hours ago' })
+    expect(ago('2026-11-27T10:00:00Z')).toEqual({ text: 'yesterday' })
+    expect(ago('2026-11-27T10:00:00Z', 'es')).toEqual({ text: 'ayer' })
+    expect(ago('2026-11-20T12:00:00Z', 'es')).toEqual({ text: 'hace 8 días' })
+    expect(ago('not a time')).toEqual({ text: '' })
   })
 })

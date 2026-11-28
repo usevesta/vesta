@@ -97,6 +97,12 @@ fn every_capabilities_md_json_example_round_trips() {
                             assert!(windows[0].end < windows[0].start, "past midnight");
                             assert!(request.command.is_slow());
                         }
+                        Command::EvCharger(EvChargerCommand::RefreshChargingSchedule) => {
+                            // Reading changes nothing: never sensitive, but slow.
+                            assert!(!request.confirmed);
+                            assert!(!request.command.is_sensitive(EndpointType::EvCharger));
+                            assert!(request.command.is_slow());
+                        }
                         other => panic!("unexpected charger command example {other:?}"),
                     },
                     other => panic!("unexpected command example for {other}"),
@@ -159,7 +165,7 @@ fn every_capabilities_md_json_example_round_trips() {
     }
 
     assert_eq!(seen.device, 4, "{seen:?}");
-    assert_eq!(seen.command, 3, "{seen:?}");
+    assert_eq!(seen.command, 4, "{seen:?}");
     assert_eq!(seen.command_result, 1, "{seen:?}");
     assert_eq!(seen.event, 1, "{seen:?}");
     assert_eq!(seen.state, 2, "{seen:?}");
@@ -168,7 +174,7 @@ fn every_capabilities_md_json_example_round_trips() {
     assert_eq!(seen.device_config, 1, "{seen:?}");
     assert_eq!(
         blocks.len(),
-        14,
+        15,
         "new JSON example in capabilities.md: classify it here"
     );
 }
@@ -223,12 +229,19 @@ fn assert_charger_example(device: &Device) {
     assert_eq!(state.mode, Some(EvChargeMode::Scheduled));
     assert_eq!(state.auto_current, Some(true));
     assert_eq!(cap.current_range(), (6.0, 30.0));
-    // Its hours: two windows, as last saved from VESTA (it does not report
-    // them), and they fit what it holds.
+    // Its hours: two windows, as last read from the charger (it does not
+    // report them; they are read on request), and they fit what it holds.
     let hours = cap.features.charging_schedule.unwrap();
     assert!(hours.editable && !hours.reports_windows && hours.saving_needs_internet);
+    assert!(hours.refreshable);
     let schedule = state.charging_schedule.as_ref().unwrap();
     assert_eq!(Some(schedule.enabled), state.schedule_enabled);
+    let origin = schedule.origin.unwrap();
+    assert_eq!(origin.source, vesta_core::ScheduleSource::Charger);
+    assert!(!origin.restored);
+    assert!(charger.capabilities.supports(&Command::EvCharger(
+        EvChargerCommand::RefreshChargingSchedule
+    )));
     assert_eq!(hours.check(&schedule.windows), Ok(()));
     assert!(charger.capabilities.supports(&Command::EvCharger(
         EvChargerCommand::SetChargingSchedule {

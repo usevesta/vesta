@@ -100,6 +100,31 @@ describe('the charger tile', () => {
     expect(sent.every((s) => s.target === CHARGER)).toBe(true)
   })
 
+  it('reads the hours from the charger only when it can, and quietly', () => {
+    const { props, sent } = bindCharger(home())
+    expect(props.scheduleFeatures?.refreshable).toBe(true)
+    props.onRefreshChargingSchedule?.()
+    expect(sent).toEqual([
+      {
+        target: CHARGER,
+        command: { capability: 'ev_charger', action: 'refresh_charging_schedule' },
+        // The editor says itself when it did not work.
+        options: { label: 'Car Charger', confirmed: false, quiet: true },
+      },
+    ])
+    expect(predict({ capability: 'ev_charger', action: 'refresh_charging_schedule' }, chargerDevice().endpoints[0])).toEqual({
+      predicted: {},
+      confirmsWith: null,
+    })
+
+    const reporting = chargerDevice()
+    const schedule = reporting.endpoints[0]?.capabilities.ev_charger?.features.charging_schedule
+    if (schedule === undefined) throw new Error('fixture changed')
+    schedule.refreshable = false
+    schedule.reports_windows = true
+    expect(bindCharger(home([reporting])).props.onRefreshChargingSchedule).toBeUndefined()
+  })
+
   it('offers no control the charger does not have (monitoring only)', () => {
     const device = chargerDevice()
     const [charger] = device.endpoints

@@ -10,13 +10,15 @@
 //! | `tuya` | `tuya` | `vesta-driver-tuya` (Tuya devices, local protocol 3.3–3.5) |
 //!
 //! The Hub asks a [`Registry`] to build one driver per configured device and
-//! never learns which crate it came from.
+//! never learns which crate it came from. Each factory gets the device's
+//! driver config and a [`DriverContext`] (e.g. the device's own durable
+//! state).
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use vesta_core::{DeviceConfig, DeviceDriver, DeviceId, DriverError};
+use vesta_core::{DeviceConfig, DeviceDriver, DeviceId, DriverContext, DriverError};
 
 /// The built-in simulated home (`config.json` + `dashboard.json`), for
 /// `vesta-hubd --dev` and for the app before a home is set up.
@@ -31,9 +33,11 @@ pub mod tuya {
     pub use vesta_driver_tuya::{Discovery, Status, TuyaConfig, Version, read_status};
 }
 
-/// Builds a driver from a device's driver-specific `config` object.
-pub type DriverFactory =
-    dyn Fn(&serde_json::Value) -> Result<Arc<dyn DeviceDriver>, DriverError> + Send + Sync;
+/// Builds a driver from a device's driver-specific `config` object and
+/// what the Hub hands it for that device.
+pub type DriverFactory = dyn Fn(&serde_json::Value, &DriverContext) -> Result<Arc<dyn DeviceDriver>, DriverError>
+    + Send
+    + Sync;
 
 /// Why a device's driver could not be built. Hub-side only: these messages
 /// name driver keys and must never reach a client.
@@ -67,17 +71,21 @@ impl Registry {
         #[allow(unused_mut)]
         let mut registry = Self::empty();
         #[cfg(feature = "sim")]
-        registry.register("sim", |config| {
-            Ok(Arc::new(vesta_driver_sim::SimDriver::from_config(config)?)
-                as Arc<dyn DeviceDriver>)
+        registry.register("sim", |config, context| {
+            Ok(
+                Arc::new(vesta_driver_sim::SimDriver::from_config(config, context)?)
+                    as Arc<dyn DeviceDriver>,
+            )
         });
         #[cfg(feature = "v2c")]
-        registry.register("v2c", |config| {
-            Ok(Arc::new(vesta_driver_v2c::V2cDriver::from_config(config)?)
-                as Arc<dyn DeviceDriver>)
+        registry.register("v2c", |config, context| {
+            Ok(
+                Arc::new(vesta_driver_v2c::V2cDriver::from_config(config, context)?)
+                    as Arc<dyn DeviceDriver>,
+            )
         });
         #[cfg(feature = "tuya")]
-        registry.register(vesta_driver_tuya::import::DRIVER, |config| {
+        registry.register(vesta_driver_tuya::import::DRIVER, |config, _context| {
             Ok(
                 Arc::new(vesta_driver_tuya::TuyaDriver::from_config(config)?)
                     as Arc<dyn DeviceDriver>,
@@ -89,7 +97,7 @@ impl Registry {
     /// Adds (or replaces) the factory for `driver`.
     pub fn register<F>(&mut self, driver: impl Into<String>, factory: F) -> &mut Self
     where
-        F: Fn(&serde_json::Value) -> Result<Arc<dyn DeviceDriver>, DriverError>
+        F: Fn(&serde_json::Value, &DriverContext) -> Result<Arc<dyn DeviceDriver>, DriverError>
             + Send
             + Sync
             + 'static,
@@ -107,8 +115,13 @@ impl Registry {
         self.factories.keys().map(String::as_str)
     }
 
-    /// Builds the driver for one configured device.
-    pub fn build(&self, device: &DeviceConfig) -> Result<Arc<dyn DeviceDriver>, BuildError> {
+    /// Builds the driver for one configured device, with what the Hub
+    /// hands it (`context`).
+    pub fn build(
+        &self,
+        device: &DeviceConfig,
+        context: &DriverContext,
+    ) -> Result<Arc<dyn DeviceDriver>, BuildError> {
         let factory =
             self.factories
                 .get(&device.driver)
@@ -116,7 +129,7 @@ impl Registry {
                     device: device.id.clone(),
                     driver: device.driver.clone(),
                 })?;
-        factory(&device.config).map_err(|source| BuildError::Driver {
+        factory(&device.config, context).map_err(|source| BuildError::Driver {
             device: device.id.clone(),
             source,
         })
@@ -144,6 +157,10 @@ mod tests {
 
     use super::*;
 
+    fn ctx() -> DriverContext {
+        DriverContext::in_memory()
+    }
+
     fn device(driver: &str, config: serde_json::Value) -> DeviceConfig {
         serde_json::from_value(json!({
             "id": "test_device",
@@ -157,7 +174,7 @@ mod tests {
     #[test]
     fn unknown_driver_is_a_typed_error() {
         let err = Registry::builtin()
-            .build(&device("does_not_exist", json!({})))
+            .build(&device("does_not_exist", json!({})), &ctx())
             .err()
             .unwrap();
         match err {
@@ -169,7 +186,7 @@ mod tests {
         }
         assert!(
             Registry::empty()
-                .build(&device("sim", json!({ "model": "light" })))
+                .build(&device("sim", json!({ "model": "light" })), &ctx())
                 .is_err()
         );
     }
@@ -182,7 +199,7 @@ mod tests {
         assert_eq!(registry.drivers().next(), Some("sim"));
 
         let driver = registry
-            .build(&device("sim", json!({ "model": "ceiling_fan" })))
+            .build(&device("sim", json!({ "model": "ceiling_fan" })), &ctx())
             .unwrap();
         assert_eq!(driver.describe().endpoints.len(), 2);
     }
@@ -193,10 +210,10 @@ mod tests {
         let registry = Registry::builtin();
         assert!(registry.contains("v2c"));
         let driver = registry
-            .build(&device(
-                "v2c",
-                json!({ "host": "192.0.2.10", "read_only": true }),
-            ))
+            .build(
+                &device("v2c", json!({ "host": "192.0.2.10", "read_only": true })),
+                &ctx(),
+            )
             .unwrap();
         let endpoints = driver.describe().endpoints;
         assert_eq!(endpoints.len(), 3);
@@ -205,7 +222,10 @@ mod tests {
             vesta_core::EndpointType::EvCharger
         );
         assert!(matches!(
-            registry.build(&device("v2c", json!({ "host": "http://192.0.2.10/" }))),
+            registry.build(
+                &device("v2c", json!({ "host": "http://192.0.2.10/" })),
+                &ctx()
+            ),
             Err(BuildError::Driver {
                 source: DriverError::InvalidConfig(_),
                 ..
@@ -219,17 +239,20 @@ mod tests {
         let registry = Registry::builtin();
         assert!(registry.contains("tuya"));
         let driver = registry
-            .build(&device(
-                "tuya",
-                json!({
-                    "device_id": "bf00000000000000000000",
-                    "local_key": "0123456789abcdef",
-                    "protocol_version": "3.5",
-                    "category": "cz",
-                    "mapping": { "1": { "code": "switch_1", "type": "Boolean" } },
-                    "read_only": true
-                }),
-            ))
+            .build(
+                &device(
+                    "tuya",
+                    json!({
+                        "device_id": "bf00000000000000000000",
+                        "local_key": "0123456789abcdef",
+                        "protocol_version": "3.5",
+                        "category": "cz",
+                        "mapping": { "1": { "code": "switch_1", "type": "Boolean" } },
+                        "read_only": true
+                    }),
+                ),
+                &ctx(),
+            )
             .unwrap();
         let endpoints = driver.describe().endpoints;
         assert_eq!(endpoints.len(), 1);
@@ -237,11 +260,14 @@ mod tests {
         let Err(BuildError::Driver {
             source: DriverError::InvalidConfig(message),
             ..
-        }) = registry.build(&device(
-            "tuya",
-            json!({ "device_id": "bf00000000000000000000", "local_key": "short",
+        }) = registry.build(
+            &device(
+                "tuya",
+                json!({ "device_id": "bf00000000000000000000", "local_key": "short",
                     "protocol_version": "3.5", "category": "cz" }),
-        ))
+            ),
+            &ctx(),
+        )
         else {
             panic!("a bad key must be refused");
         };
@@ -252,7 +278,7 @@ mod tests {
     #[test]
     fn invalid_driver_config_is_a_typed_error() {
         let err = Registry::builtin()
-            .build(&device("sim", json!({ "model": "toaster" })))
+            .build(&device("sim", json!({ "model": "toaster" })), &ctx())
             .err()
             .unwrap();
         assert!(matches!(
@@ -282,11 +308,12 @@ mod tests {
     #[tokio::test]
     async fn custom_factories_can_be_registered() {
         let mut registry = Registry::empty();
-        registry.register(
-            "nothing",
-            |_| Ok(Arc::new(Nothing) as Arc<dyn DeviceDriver>),
-        );
-        let driver = registry.build(&device("nothing", json!({}))).unwrap();
+        registry.register("nothing", |_, _| {
+            Ok(Arc::new(Nothing) as Arc<dyn DeviceDriver>)
+        });
+        let driver = registry
+            .build(&device("nothing", json!({})), &ctx())
+            .unwrap();
         assert!(matches!(
             driver
                 .execute(&EndpointId::main(), Command::OnOff(OnOffCommand::On))

@@ -28,6 +28,10 @@ impl From<BusEvent> for ServerMessage {
 }
 
 /// What a subscriber gets from [`Subscription::recv`].
+// Returned by value once per update and moved straight on: boxing the
+// update would cost an allocation per message to shrink a value that never
+// sits in a collection.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum BusRecv {
     Event(BusEvent),

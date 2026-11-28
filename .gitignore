@@ -21,6 +21,8 @@ apps/tauri/node_modules/
 config.json
 dashboard.json
 .vesta/
+# Devices' kept state (`vesta-hubd --state-dir`, default `state/` next to config.json): a home's own data.
+/state/
 *.p8
 *.p12
 *.mobileprovision

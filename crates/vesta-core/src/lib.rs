@@ -18,6 +18,7 @@ pub mod config;
 pub mod dashboard;
 pub mod device;
 pub mod driver;
+pub mod driver_state;
 pub mod event;
 pub mod id;
 pub mod message;
@@ -38,8 +39,8 @@ pub use capability::{
     LevelState, LockCapability, LockFeatures, LockState, LockStatus, MeterRole,
     OccupancyCapability, OccupancyState, OnOffCapability, OnOffFeatures, OnOffState,
     PowerMeterCapability, PowerMeterFeatures, PowerMeterState, RobotVacuumCapability,
-    RobotVacuumFeatures, RobotVacuumState, RobotVacuumStatus, ScheduleError, TemperatureCapability,
-    TemperatureState, TriggerCapability, Weekday,
+    RobotVacuumFeatures, RobotVacuumState, RobotVacuumStatus, ScheduleError, ScheduleOrigin,
+    ScheduleSource, TemperatureCapability, TemperatureState, TriggerCapability, Weekday,
 };
 pub use command::{
     ColorCommand, ColorTemperatureCommand, Command, CommandError, CommandRequest, CommandResult,
@@ -56,7 +57,11 @@ pub use dashboard::{
     MAX_WIDGETS_PER_PAGE, Page, Theme, TouchScale, Widget,
 };
 pub use device::{Device, DeviceDescriptor, Endpoint, EndpointType};
-pub use driver::{DeviceDriver, DriverError, EventSink};
+pub use driver::{DeviceDriver, DriverContext, DriverError, EventSink};
+pub use driver_state::{
+    DriverState, InvalidStateKey, MAX_STATE_KEY_LEN, MemoryState, SecretInState, StateKey,
+    check_no_secrets,
+};
 pub use event::{EndpointEvent, EventKind};
 pub use id::{DeviceId, EndpointId, IdError, RoomId, Target};
 pub use message::{

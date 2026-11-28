@@ -15,7 +15,7 @@ use vesta_core::{
 use super::*;
 
 fn driver(config: serde_json::Value) -> Arc<SimDriver> {
-    Arc::new(SimDriver::from_config(&config).unwrap())
+    Arc::new(SimDriver::from_config(&config, &DriverContext::in_memory()).unwrap())
 }
 
 struct Running {
@@ -109,6 +109,8 @@ fn config_is_validated() {
         json!({ "model": "light", "colour": "red" }),
         json!({ "model": "light", "solar": true }),
         json!({ "model": "doorbell", "battery": false }),
+        json!({ "model": "light", "hours": "on_request" }),
+        json!({ "model": "ev_charger", "hours": "sometimes" }),
         json!({ "model": "light", "read_only": true }),
         json!({ "model": "robot_vacuum", "load_w": 10.0 }),
         json!({ "model": "smart_plug", "load_w": -1.0 }),
@@ -116,13 +118,19 @@ fn config_is_validated() {
     ] {
         assert!(
             matches!(
-                SimDriver::from_config(&bad),
+                SimDriver::from_config(&bad, &DriverContext::in_memory()),
                 Err(DriverError::InvalidConfig(_))
             ),
             "{bad} should be rejected"
         );
     }
-    assert!(SimDriver::from_config(&json!({ "model": "doorbell", "ring_every_sec": 30 })).is_ok());
+    assert!(
+        SimDriver::from_config(
+            &json!({ "model": "doorbell", "ring_every_sec": 30 }),
+            &DriverContext::in_memory()
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -702,6 +710,117 @@ async fn ev_charger_reports_changes_and_follows_commands() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn on_request_hours_are_read_saved_and_kept_across_restarts() {
+    use vesta_core::{
+        ChargingWindow, EvChargerCommand, MemoryState, ScheduleSource, StateKey, Weekday,
+    };
+
+    let features = |driver: &SimDriver| {
+        driver.describe().endpoints[0]
+            .capabilities
+            .ev_charger
+            .clone()
+            .unwrap()
+    };
+    let config = json!({ "model": "ev_charger", "latency_ms": 10, "hours": "on_request" });
+    let state = Arc::new(MemoryState::new());
+    let context = DriverContext::new(Arc::clone(&state) as Arc<dyn vesta_core::DriverState>);
+    let charger = Arc::new(SimDriver::from_config(&config, &context).unwrap());
+    let cap = features(&charger);
+    let hours = cap.features.charging_schedule.unwrap();
+    assert!(!hours.reports_windows && hours.refreshable && hours.editable);
+    assert_eq!(
+        cap.state.unwrap().charging_schedule,
+        None,
+        "unknown until read or saved"
+    );
+
+    let main = ep("charger");
+    let started = Instant::now();
+    charger
+        .execute(
+            &main,
+            Command::EvCharger(EvChargerCommand::RefreshChargingSchedule),
+        )
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_millis(60),
+        "the slower path"
+    );
+    let read = features(&charger).state.unwrap().charging_schedule.unwrap();
+    let origin = read.origin.unwrap();
+    assert_eq!(origin.source, ScheduleSource::Charger);
+    assert!(!origin.restored);
+    assert_eq!(read.windows[0].start.to_string(), "23:00");
+
+    let weekend = ChargingWindow {
+        start: "10:00".parse().unwrap(),
+        end: "14:00".parse().unwrap(),
+        days: vec![Weekday::Sunday, Weekday::Saturday],
+    };
+    charger
+        .execute(
+            &main,
+            Command::EvCharger(EvChargerCommand::SetChargingSchedule {
+                enabled: true,
+                windows: vec![weekend.clone()],
+            }),
+        )
+        .await
+        .unwrap();
+    let saved = features(&charger).state.unwrap().charging_schedule.unwrap();
+    assert_eq!(saved.origin.unwrap().source, ScheduleSource::Saved);
+    let kept = state.values();
+    assert_eq!(
+        kept.keys().map(StateKey::as_str).collect::<Vec<_>>(),
+        ["charging_schedule"]
+    );
+
+    // A restart: the hours come back as the last known ones, and are
+    // followed.
+    let again = SimDriver::from_config(&config, &context).unwrap();
+    let restored = features(&again).state.unwrap().charging_schedule.unwrap();
+    assert_eq!(restored.windows, [weekend.normalized()]);
+    let origin = restored.origin.unwrap();
+    assert!(origin.restored);
+    assert_eq!(origin.source, ScheduleSource::Saved);
+
+    // Unreadable state is ignored: the charger starts as if new.
+    let broken = DriverContext::new(Arc::new(MemoryState::with_values([(
+        StateKey::new("charging_schedule").unwrap(),
+        json!({ "windows": "nope" }),
+    )])));
+    let fresh = SimDriver::from_config(&config, &broken).unwrap();
+    assert_eq!(features(&fresh).state.unwrap().charging_schedule, None);
+
+    // A charger that reports its hours never needs reading.
+    let reported = driver(json!({ "model": "ev_charger", "latency_ms": 0 }));
+    assert!(
+        !features(&reported)
+            .features
+            .charging_schedule
+            .unwrap()
+            .refreshable
+    );
+    assert!(matches!(
+        reported
+            .execute(
+                &main,
+                Command::EvCharger(EvChargerCommand::RefreshChargingSchedule)
+            )
+            .await,
+        Err(DriverError::Unsupported)
+    ));
+    let live = features(&reported)
+        .state
+        .unwrap()
+        .charging_schedule
+        .unwrap();
+    assert_eq!(live.origin, None);
+}
+
+#[tokio::test(start_paused = true)]
 async fn smart_plug_switches_and_measures() {
     use vesta_core::PowerMeterState;
 
@@ -876,7 +995,7 @@ fn demo_home_is_valid_and_only_uses_the_simulator() {
     assert!(!config.devices.is_empty());
     for device in &config.devices {
         assert_eq!(device.driver, "sim", "{}", device.id);
-        SimDriver::from_config(&device.config).unwrap();
+        SimDriver::from_config(&device.config, &DriverContext::in_memory()).unwrap();
     }
     let dashboard = vesta_core::Dashboard::from_json(demo::DASHBOARD).unwrap();
     assert!(!dashboard.pages.is_empty());

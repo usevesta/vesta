@@ -20,8 +20,8 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep, timeout};
 use vesta_core::{
     AvailabilityChange, BusEvent, CommandError, CommandRequest, DeviceConfig, DeviceDescriptor,
-    DeviceDriver, DeviceId, DriverError, Endpoint, EventBus, EventSink, HubConfig, RejectReason,
-    Snapshot, Subscription, Target, Timestamp,
+    DeviceDriver, DeviceId, DriverContext, DriverError, Endpoint, EventBus, EventSink, HubConfig,
+    RejectReason, Snapshot, Subscription, Target, Timestamp,
 };
 use vesta_drivers::Registry;
 
@@ -46,9 +46,10 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
-    /// Builds a driver for every configured device and spawns the device
-    /// loops into `tasks`. A device whose driver cannot be built is skipped
-    /// (and logged) so one bad entry never takes the others down.
+    /// Builds a driver for every configured device, each with its own
+    /// durable state (`options.driver_state`), and spawns the device loops
+    /// into `tasks`. A device whose driver cannot be built is skipped (and
+    /// logged) so one bad entry never takes the others down.
     pub(crate) fn start(
         config: &HubConfig,
         registry: &Registry,
@@ -58,7 +59,8 @@ impl Runtime {
         let mut devices = Vec::new();
         let mut drivers = HashMap::new();
         for device_config in &config.devices {
-            let driver = match registry.build(device_config) {
+            let context = DriverContext::new(options.driver_state.open(&device_config.id));
+            let driver = match registry.build(device_config, &context) {
                 Ok(driver) => driver,
                 Err(error) => {
                     tracing::error!(%error, "device skipped");

@@ -100,7 +100,8 @@ function. The grid meter carries the contracted power as `limit_w`.
               "overnight": true,
               "editable": true,
               "reports_windows": false,
-              "saving_needs_internet": true
+              "saving_needs_internet": true,
+              "refreshable": true
             }
           },
           "state": {
@@ -121,7 +122,8 @@ function. The grid meter carries the contracted power as `limit_w`.
               "windows": [
                 { "start": "22:00", "end": "06:00", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"] },
                 { "start": "00:00", "end": "08:00", "days": ["saturday", "sunday"] }
-              ]
+              ],
+              "origin": { "source": "charger", "at": "2026-11-28T09:30:00Z", "restored": false }
             }
           }
         }
@@ -244,7 +246,7 @@ The type decides the icon, the default widget and whether opening commands are s
 | `temperature` | — | `celsius` | — | — | v2 |
 | `humidity` | — | `percent: 0–100` | — | — | v2 |
 | `power_meter` | `role` (`grid`, `solar`, `load`, `ev`, `house`, `battery`), `bidirectional: bool` | `power_w`, `energy_wh?`, `energy_exported_wh?`, `limit_w?`, `voltage_v?`, `current_a?` | — | — | v2 |
-| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools), `charging_schedule?` (`max_windows`, `weekdays`, `overnight`, `editable`, `reports_windows`, `saving_needs_internet`) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?`, `charging_schedule?: { enabled, windows: [{ start, end, days }] }` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }`, `set_charging_schedule { enabled, windows }` | — | v2 |
+| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools), `charging_schedule?` (`max_windows`, `weekdays`, `overnight`, `editable`, `reports_windows`, `saving_needs_internet`, `refreshable`) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?`, `charging_schedule?: { enabled, windows: [{ start, end, days }], origin?: { source: charger \| saved, at, restored } }` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }`, `set_charging_schedule { enabled, windows }`, `refresh_charging_schedule` | — | v2 |
 | `battery` | — | `percent: 0–100`, `low: bool` | — | — | v2 |
 | `robot_vacuum` | `start`, `pause`, `return_to_dock` (bools) | `status: docked \| charging \| cleaning \| paused \| returning \| idle \| error`, `cleaned_area_m2?`, `cleaning_duration_s?` | `start`, `pause`, `return_to_dock` | — | v2 |
 
@@ -259,9 +261,11 @@ Notes:
 - `ev_charger.current_a` is the setpoint (what the charger offers the car); `phase_current_a` is what the car draws, per phase (L1 first).
 - `ev_charger.mode`: `manual` charges at the set current (as fast as allowed), `solar` only with surplus sun, `solar_grid` with surplus sun topped up from the grid to the minimum current, `scheduled` as planned on the charger. Chargers whose schedule is a separate on/off (in any mode) report `features.schedule` and `state.schedule_enabled` instead.
 - `ev_charger` charging hours (Matter: no EnergyEVSE equivalent; its `ChargingTargetSchedules` are "charged by" targets, not windows). The schedule **lives in the charger**, which follows it by itself, so it keeps working when VESTA, the panel or the internet are down (AGENTS.md rule 7). VESTA only stores hours in it and switches it on and off.
-  - `features.charging_schedule` says what the charger holds and what VESTA can do: up to `max_windows` time windows; `weekdays`: each window can be limited to some days (otherwise every window is every day); `overnight`: a window may run past midnight (it ends before it starts); `editable`: `set_charging_schedule` works; `reports_windows`: the charger reports its hours (when `false`, `state.charging_schedule` holds the hours last saved from VESTA, which may have been changed elsewhere since, and is omitted until then); `saving_needs_internet`: storing the hours goes through the internet (switching the schedule on and off with `set_schedule`, and following it, do not). Omitted when the charger has no windows or they can only be seen and changed on the charger (or its own app); `set_schedule` still switches them on and off.
-  - `state.charging_schedule`: `enabled` (same as `schedule_enabled`) and `windows`, each `{ start, end, days }`. A window that ends before it starts runs past midnight, and `days` are the days it starts on (Friday 22:00–06:00 ends on Saturday morning). Days are in week order.
+  - `features.charging_schedule` says what the charger holds and what VESTA can do: up to `max_windows` time windows; `weekdays`: each window can be limited to some days (otherwise every window is every day); `overnight`: a window may run past midnight (it ends before it starts); `editable`: `set_charging_schedule` works; `reports_windows`: the charger reports its hours by itself, so they are always current (when `false`, `state.charging_schedule` holds the last hours VESTA knows, read on request or saved from VESTA, which may have been changed elsewhere since, and is omitted until then); `saving_needs_internet`: storing the hours goes through the internet (switching the schedule on and off with `set_schedule`, and following it, do not); `refreshable`: `refresh_charging_schedule` works (only for chargers that do not report their hours; it may need the internet too). Omitted when the charger has no windows or they can only be seen and changed on the charger (or its own app); `set_schedule` still switches them on and off.
+  - `state.charging_schedule`: `enabled` (same as `schedule_enabled`) and `windows`, each `{ start, end, days }`. A window that ends before it starts runs past midnight, and `days` are the days it starts on (Friday 22:00–06:00 ends on Saturday morning). Days are in week order. No windows: no hours are set on the charger.
+  - `state.charging_schedule.origin` (only when `reports_windows` is `false`): where the windows come from, `source: charger` (read from it) or `saved` (saved from VESTA and taken by the charger); `at`, when (RFC 3339); `restored: true` when they were kept from before the Hub last started and nothing has been read or saved since (the last known hours). The UI says it in plain words ("Hours read from the charger just now"). `enabled` always comes from the charger as it is now.
   - `set_charging_schedule { enabled, windows }` stores the windows and switches the schedule on or off in one go. It needs `features.charging_schedule.editable` and windows that fit (1 to `max_windows`, each with at least one day and no day twice, every day when the charger has no `weekdays`, start ≠ end, past midnight only with `overnight`); the Hub answers `unsupported` otherwise. It is a **slow** command: the Hub and the screens wait 20 s instead of 5 s.
+  - `refresh_charging_schedule` reads the hours from the charger once, so the screen shows the ones set on it now (e.g. changed in the charger's own app). It needs `features.charging_schedule.refreshable`. The UI sends it **only when someone asks**: when the hours editor opens, never on a timer; a driver may answer from its last read when asked again within moments (the V2C driver: at most one read per 30 s). It changes nothing on the charger, is not sensitive, and is **slow** (it may go through the internet). The UI sends it quietly: a failure shows as a note next to the last known hours, not as an error message.
 - A charger and the meters it reads (grid, house, solar, battery) are **endpoints of one device**: a charger widget finds its meters among its sibling endpoints by `role`.
 - `power_meter.limit_w` is the most power the connection may draw (the contracted power on a `grid` meter). It is informative only: VESTA never enforces it; the devices that do keep doing it.
 - `power_meter.energy_wh` is omitted when the device only measures power (no invented counters).
@@ -296,13 +300,18 @@ Notes:
     "confirmed": false }
   ```
 - `confirmed` (default `false`) is `true` only after the user explicitly confirmed a sensitive command (see below).
-- Lifecycle: the frontend shows the change as **pending** immediately, the Hub forwards it to the driver, and the pending state resolves when the driver reports the new state. If no confirmation arrives before the timeout (default 5 s; 20 s for slow commands such as `ev_charger.set_charging_schedule`, which may go through the internet), the UI reverts and shows an error. While a command is on its way, the control that sent it is busy and refuses to send it again.
+- Lifecycle: the frontend shows the change as **pending** immediately, the Hub forwards it to the driver, and the pending state resolves when the driver reports the new state. If no confirmation arrives before the timeout (default 5 s; 20 s for slow commands such as `ev_charger.set_charging_schedule` and `ev_charger.refresh_charging_schedule`, which may go through the internet), the UI reverts and shows an error. While a command is on its way, the control that sent it is busy and refuses to send it again.
 - Saving a charger's hours (a slow command):
   ```json
   { "type": "command", "request_id": "c-44", "target": "car_charger/charger",
     "command": { "capability": "ev_charger", "action": "set_charging_schedule", "enabled": true,
                  "windows": [{ "start": "22:00", "end": "06:00", "days": ["saturday", "sunday"] }] },
     "confirmed": false }
+  ```
+- Reading a charger's hours when someone opens the hours editor (also slow; it changes nothing on the charger):
+  ```json
+  { "type": "command", "request_id": "c-45", "target": "car_charger/charger",
+    "command": { "capability": "ev_charger", "action": "refresh_charging_schedule" }, "confirmed": false }
   ```
 - Result: the Hub answers every command with a `command_result`. `ok: true` means the device accepted it; `error` is present exactly when `ok` is `false`:
   ```json
@@ -401,7 +410,8 @@ pub enum Command {
     Lock(LockCommand),                 // Lock, Unlock, Unlatch
     Trigger(TriggerCommand),           // Fire
     EvCharger(EvChargerCommand),       // Pause, Resume, SetCurrent { amps }, SetMode { mode }, Lock, Unlock,
-                                       // SetSchedule { enabled }, SetChargingSchedule { enabled, windows }
+                                       // SetSchedule { enabled }, SetChargingSchedule { enabled, windows },
+                                       // RefreshChargingSchedule
     RobotVacuum(RobotVacuumCommand),   // Start, Pause, ReturnToDock
 }
 ```
@@ -409,6 +419,22 @@ pub enum Command {
 Drivers return `DriverError::Unsupported` for commands they cannot execute. Routing a frontend command is a single `match`; testing a driver is feeding it commands and asserting the mocked I/O.
 
 `EventSink` is bound to one device and feeds the Hub's device runtime through a bounded channel (no update is dropped before the snapshot cache records it). The runtime then fans updates out to clients over the `EventBus` (`tokio::sync::broadcast`), where a lagging subscriber gets a fresh snapshot instead.
+
+Drivers are built by a factory in `vesta-drivers` from the device's driver `config` and a `DriverContext`, which carries the device's **driver state** (`vesta_core::driver_state`):
+
+```rust
+#[async_trait]
+pub trait DriverState: Send + Sync {
+    /// The value stored under `key`, if any (state that could not be read was logged and dropped).
+    fn get(&self, key: &StateKey) -> Option<serde_json::Value>;
+    /// Stores `value` durably before returning (`null` removes it). Refuses secret-like fields.
+    async fn set(&self, key: &StateKey, value: serde_json::Value) -> Result<(), DriverError>;
+}
+```
+
+- It is for what a device cannot tell VESTA again after a restart, e.g. a charger's last known hours when they are only read on request. Bound to one device (one namespace each), values are JSON under short `snake_case` keys (dots allowed for namespacing, at most 64 bytes).
+- **Never secrets**: no API keys, local keys, passwords or tokens. Values whose fields are named like a secret are refused when written and dropped when read; drivers store device data only.
+- The Hub keeps it in one JSON file per device (`<state-dir>/<device_id>.json`, `{ "schema_version": 1, "values": { ... } }`, written atomically like `dashboard.json`), or in memory (`vesta-hubd --dev`, tests). A file that cannot be read is logged and ignored; it never stops the Hub or the device, so a driver must work without its state.
 
 ## Configuration Overrides
 `config.json` holds driver connection settings and optional presentation overrides per endpoint. It never declares capabilities.
@@ -451,4 +477,5 @@ Drivers return `DriverError::Unsupported` for commands they cannot execute. Rout
 
 ## Driver Guidance
 - Report features honestly; if the hardware can't report position, set `position: false`.
+- When a value can only be read through a slow or limited path (e.g. a cloud with a daily quota), read it only when someone asks (a `refresh_*` command sent by the UI), never on a timer; answer repeated asks from the last read for a while, keep the last known value in the driver state, and say where it came from and when.
 - Vendor-specific mappings (e.g. Tuya data points per product category) stay inside the driver crate, with fixtures for each supported category.

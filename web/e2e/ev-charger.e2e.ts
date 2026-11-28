@@ -142,6 +142,39 @@ describe('the simulated car charger, end to end', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'unsupported' })
   })
 
+  it('reads the hours set on the charger when asked, with where from and when', async () => {
+    const features = store.getState().endpoints[CHARGER]?.capabilities.ev_charger?.features.charging_schedule
+    // The simulated home's charger is like one that does not report them.
+    expect(features).toMatchObject({ reports_windows: false, refreshable: true })
+    const before = Date.now()
+    await expect(
+      live().sendCommand(CHARGER, ev({ capability: 'ev_charger', action: 'refresh_charging_schedule' }), { quiet: true }),
+    ).resolves.toEqual({ ok: true })
+    await waitUntil(() => charger()?.charging_schedule?.origin?.source === 'charger')
+    const origin = charger()?.charging_schedule?.origin
+    expect(origin?.restored).toBe(false)
+    expect(Date.parse(origin?.at ?? '')).toBeGreaterThanOrEqual(before - 5_000)
+    expect(charger()?.charging_schedule?.windows.length).toBeGreaterThan(0)
+
+    // The charger tile asks for it, quietly, and only when it can.
+    const sent: Command[] = []
+    const spec = bindWidget(
+      { type: 'ev-charger', target: CHARGER, col_span: 4, row_span: 2 },
+      selectEndpointView(store.getState(), CHARGER),
+      {
+        send: (_target, command) => {
+          sent.push(command)
+          return Promise.resolve({ ok: true })
+        },
+        fallbackLabel: 'Unknown device',
+      },
+    )
+    if (spec.type !== 'ev-charger') throw new Error('expected the charger tile')
+    const props = spec.props as { onRefreshChargingSchedule?: () => unknown }
+    await props.onRefreshChargingSchedule?.()
+    expect(sent).toEqual([{ capability: 'ev_charger', action: 'refresh_charging_schedule' }])
+  })
+
   it('saves charging hours in the charger, and refuses hours that do not fit', async () => {
     const features = store.getState().endpoints[CHARGER]?.capabilities.ev_charger?.features.charging_schedule
     expect(features).toMatchObject({ max_windows: 2, weekdays: true, editable: true })
@@ -154,13 +187,14 @@ describe('the simulated car charger, end to end', () => {
     ).resolves.toEqual({ ok: true })
     await waitUntil(() => charger()?.charging_schedule?.windows[0]?.start === '22:30')
     expect(charger()?.schedule_enabled).toBe(true)
-    // Days come back in week order.
-    expect(charger()?.charging_schedule).toEqual({
+    // Days come back in week order; the screen knows they were saved here.
+    expect(charger()?.charging_schedule).toMatchObject({
       enabled: true,
       windows: [
         { start: '22:30', end: '06:00', days: ['monday', 'friday'] },
         { start: '10:00', end: '14:00', days: ['saturday', 'sunday'] },
       ],
+      origin: { source: 'saved', restored: false },
     })
     await expect(
       live().sendCommand(
