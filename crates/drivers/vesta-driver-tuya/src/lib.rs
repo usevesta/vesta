@@ -78,9 +78,11 @@ struct Timing {
     /// A command, from `execute` to the device's answer (the Hub gives up
     /// after 5 s).
     command_budget: Duration,
-    /// After a command, ask for the status this soon unless the device
-    /// reported it by itself.
-    confirm_query: Duration,
+    /// After a command worked, ask for the status again at these times
+    /// (from when it was confirmed): the switch reports at once, but a
+    /// plug's power, voltage and current catch up a moment later, and the
+    /// regular poll would show them only after `poll`.
+    follow_ups: [Duration; 3],
 }
 
 impl Timing {
@@ -97,7 +99,11 @@ impl Timing {
             offline_after: 2,
             discovery_wait: Duration::from_secs(15),
             command_budget: Duration::from_millis(4_500),
-            confirm_query: Duration::from_secs(1),
+            follow_ups: [
+                Duration::from_secs(1),
+                Duration::from_millis(2_500),
+                Duration::from_secs(5),
+            ],
         }
     }
 
@@ -452,7 +458,9 @@ impl TuyaDriver {
         }
     }
 
-    /// Takes a message from the device into account.
+    /// Takes a message from the device into account. Returns whether it
+    /// confirmed the command in flight (by answering it, or by reporting
+    /// its new values).
     async fn handle(
         &self,
         message: protocol::Message,
@@ -525,6 +533,7 @@ impl TuyaDriver {
         }) && let Some(flight) = inflight.take()
         {
             flight.finish(Ok(()), state);
+            answered = true;
         }
         self.publish(sink, state).await?;
         Ok(answered)
@@ -545,24 +554,32 @@ impl TuyaDriver {
         let mut last_rx = Instant::now();
         let mut last_tx = Instant::now();
         let mut next_poll = last_tx + timing.poll;
+        // Extra status queries after a command, soonest first.
+        let mut follow_ups: Vec<Instant> = Vec::new();
         let mut inflight: Option<InFlight> = None;
         loop {
             let heartbeat_at = last_tx + timing.heartbeat;
             let silent_at = last_rx + timing.silence;
             let inflight_until = inflight.as_ref().map(|flight| flight.deadline);
+            let query_at = follow_ups
+                .first()
+                .map_or(next_poll, |at| next_poll.min(*at));
             tokio::select! {
                 message = link.recv() => {
                     last_rx = Instant::now();
                     if self.handle(message?, version, link, sink, state, &mut inflight).await? {
-                        // Show the result soon, even if the device does not
-                        // report it by itself.
-                        next_poll = next_poll.min(Instant::now() + timing.confirm_query);
+                        // Show the result soon (power, voltage and current
+                        // included), even if the device does not report it
+                        // by itself.
+                        let confirmed = Instant::now();
+                        follow_ups = timing.follow_ups.iter().map(|after| confirmed + *after).collect();
                     }
                 }
-                () = sleep_until(next_poll) => {
+                () = sleep_until(query_at) => {
                     link.send(&self.status_request(version, state.listing), timing.io).await?;
                     last_tx = Instant::now();
                     next_poll = last_tx + timing.poll;
+                    follow_ups.retain(|at| *at > last_tx);
                 }
                 () = sleep_until(heartbeat_at) => {
                     link.send(&protocol::heartbeat(self.id()), timing.io).await?;

@@ -118,7 +118,11 @@ service"), so no developer account and no tinytuya are needed.
 - **Commands** set exactly the data points of `model.rs` (`switch_1: true`, `pause: true`, …),
   one command at a time, and are confirmed by the device's answer or its report of the new
   values within 4.5 s (the Hub gives up at 5 s). A command the device cannot take now is refused
-  at once and never kept for later. Robot: `start` sets `power_go: true`, or `pause: false` when
+  at once and never kept for later.
+- **After a command** that worked (whichever came first, the answer or the report), the status
+  is asked again 1 s, 2.5 s and 5 s later: a plug reports its switch at once, but its power,
+  voltage and current catch up a moment later, and waiting for the next poll (10 s) left the old
+  reading on screen. These are ordinary status queries; nothing else is sent. Robot: `start` sets `power_go: true`, or `pause: false` when
   it is paused; `pause` sets `pause: true` (or `power_go: false`); back to the dock sets
   `switch_charge: true` (or `mode: chargego`).
 
