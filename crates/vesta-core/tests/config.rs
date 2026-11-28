@@ -20,7 +20,9 @@ fn config_example_parses_and_validates() {
         Some(NotificationsConfig::Ntfy { .. })
     ));
     assert_eq!(config.devices.len(), 5);
-    let charger = config.device(&DeviceId::new("car_charger").unwrap()).unwrap();
+    let charger = config
+        .device(&DeviceId::new("car_charger").unwrap())
+        .unwrap();
     assert_eq!(charger.driver, "v2c");
 
     let strike = config
