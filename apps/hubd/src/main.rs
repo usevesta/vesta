@@ -338,7 +338,7 @@ mod tests {
             assert!(targets.contains(target), "{target} is not in the dev home");
         }
 
-        assert_eq!(dashboard.pages.len(), 3);
+        assert_eq!(dashboard.pages.len(), 4);
         assert_eq!(
             widget_types,
             BTreeSet::from([
@@ -349,6 +349,8 @@ mod tests {
                 "ev-charger",
                 "fan-control",
                 "light-control",
+                "outlet-control",
+                "robot-vacuum",
             ])
         );
         assert!(

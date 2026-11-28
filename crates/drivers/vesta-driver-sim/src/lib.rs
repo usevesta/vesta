@@ -16,6 +16,8 @@
 //! | `door_strike` | `main` (`door`) | `trigger` |
 //! | `doorbell` | `main` (`doorbell`) | `doorbell`, `occupancy` |
 //! | `ev_charger` | `charger` (`ev_charger`); `grid`, `house`, `solar`, `battery` (`meter`) | `ev_charger` with every feature; `power_meter` per role (see `ev.rs`) |
+//! | `smart_plug` | `main` (`outlet`) | `on_off`, `power_meter` (`load`, with voltage, current and energy) |
+//! | `robot_vacuum` | `main` (`robot_vacuum`) | `robot_vacuum` with every feature, `battery` (see `appliance.rs`) |
 //!
 //! Options:
 //! - `latency_ms` (default 150): delay before a command is applied, so the
@@ -28,10 +30,15 @@
 //!   `occupancy.detected` and `doorbell.pressed`.
 //! - `solar` (`ev_charger` only, default `true`): the home has solar panels.
 //! - `battery` (`ev_charger` only, default `false`): the home has a battery.
+//! - `read_only` (`smart_plug`, `robot_vacuum`, default `false`): set up for
+//!   monitoring only; no controls, every command refused.
+//! - `load_w` (`smart_plug` only, default 60): what the plugged-in appliance
+//!   draws.
 //!
 //! [`demo`] holds a whole simulated home (config and dashboard) for
 //! `vesta-hubd --dev` and for the app when no home is set up yet.
 
+mod appliance;
 mod ev;
 
 use std::cmp::Ordering;
@@ -53,6 +60,7 @@ use vesta_core::{
     async_trait,
 };
 
+use crate::appliance::{Appliance, PlugSim, RobotSim};
 use crate::ev::EvSim;
 
 /// Default simulated command latency.
@@ -82,6 +90,8 @@ pub enum SimModel {
     DoorStrike,
     Doorbell,
     EvCharger,
+    SmartPlug,
+    RobotVacuum,
 }
 
 /// The device's driver config (`devices[].config` in `config.json`).
@@ -103,6 +113,12 @@ pub struct SimConfig {
     /// `ev_charger` only: the home has a battery (default `false`).
     #[serde(default)]
     pub battery: Option<bool>,
+    /// `smart_plug` and `robot_vacuum` only: monitoring only.
+    #[serde(default)]
+    pub read_only: Option<bool>,
+    /// `smart_plug` only: what the appliance draws, in W (default 60).
+    #[serde(default)]
+    pub load_w: Option<f64>,
 }
 
 const fn default_latency_ms() -> u64 {
@@ -120,6 +136,8 @@ impl SimConfig {
             seed: None,
             solar: None,
             battery: None,
+            read_only: None,
+            load_w: None,
         }
     }
 
@@ -141,6 +159,20 @@ impl SimConfig {
         }
         if (self.solar.is_some() || self.battery.is_some()) && self.model != SimModel::EvCharger {
             return invalid("solar and battery are only valid for the ev_charger model");
+        }
+        if self.read_only.is_some()
+            && !matches!(self.model, SimModel::SmartPlug | SimModel::RobotVacuum)
+        {
+            return invalid("read_only is only valid for the smart_plug and robot_vacuum models");
+        }
+        match self.load_w {
+            Some(_) if self.model != SimModel::SmartPlug => {
+                return invalid("load_w is only valid for the smart_plug model");
+            }
+            Some(watts) if !(0.0..=3_680.0).contains(&watts) => {
+                return invalid("load_w must be between 0 and 3680");
+            }
+            _ => {}
         }
         match self.ring_every_sec {
             Some(_) if self.model != SimModel::Doorbell => {
@@ -183,6 +215,8 @@ struct SimState {
     endpoints: Vec<SimEndpoint>,
     /// `ev_charger` only: the charger, the car and the home's meters.
     ev: Option<EvSim>,
+    /// `smart_plug` and `robot_vacuum` only.
+    appliance: Option<Appliance>,
 }
 
 impl SimState {
@@ -191,6 +225,15 @@ impl SimState {
         if let Some(ev) = &self.ev {
             for sim in &mut self.endpoints {
                 ev::sync(ev, std::slice::from_mut(&mut sim.endpoint));
+            }
+        }
+    }
+
+    /// Copies the plug's or robot's readings into its endpoint.
+    fn sync_appliance(&mut self) {
+        if let Some(appliance) = &self.appliance {
+            for sim in &mut self.endpoints {
+                appliance.sync(&mut sim.endpoint);
             }
         }
     }
@@ -287,6 +330,10 @@ impl SimEndpoint {
             CapabilityKind::Occupancy => caps.occupancy.as_ref()?.state.map(Into::into),
             CapabilityKind::PowerMeter => caps.power_meter.as_ref()?.state.map(Into::into),
             CapabilityKind::EvCharger => caps.ev_charger.as_ref()?.state.clone().map(Into::into),
+            CapabilityKind::Battery => caps.battery.as_ref()?.state.map(Into::into),
+            CapabilityKind::RobotVacuum => {
+                caps.robot_vacuum.as_ref()?.state.clone().map(Into::into)
+            }
             _ => None,
         }
     }
@@ -455,7 +502,7 @@ impl SimModel {
                 },
             ))],
             // Built from the simulation in `SimDriver::new`.
-            Self::EvCharger => Vec::new(),
+            Self::EvCharger | Self::SmartPlug | Self::RobotVacuum => Vec::new(),
             Self::Doorbell => vec![plain(endpoint(
                 main,
                 "Doorbell",
@@ -481,11 +528,25 @@ impl SimDriver {
                 config.battery.unwrap_or(false),
             )
         });
+        let appliance = match config.model {
+            SimModel::SmartPlug => Some(Appliance::Plug(PlugSim::new(
+                config.load_w.unwrap_or(appliance::DEFAULT_LOAD_W),
+            ))),
+            SimModel::RobotVacuum => Some(Appliance::Robot(RobotSim::new())),
+            _ => None,
+        };
         let mut endpoints = config.model.endpoints()?;
         if let Some(ev) = &ev {
             endpoints.extend(ev::endpoints(ev)?.into_iter().map(plain));
         }
-        let mut state = SimState { endpoints, ev };
+        if let Some(appliance) = &appliance {
+            endpoints.push(plain(appliance.endpoint(config.read_only.unwrap_or(false))));
+        }
+        let mut state = SimState {
+            endpoints,
+            ev,
+            appliance,
+        };
         state.sync_ev();
         let rng = match config.seed {
             Some(seed) => fastrand::Rng::with_seed(seed),
@@ -550,6 +611,17 @@ impl SimDriver {
         cmd: Command,
     ) -> Result<Vec<(EndpointId, CapabilityKind)>, DriverError> {
         let mut state = self.lock_state();
+        if let Command::RobotVacuum(cmd) = cmd {
+            let Some(Appliance::Robot(robot)) = state.appliance.as_mut() else {
+                return Err(DriverError::Unsupported);
+            };
+            robot.apply(cmd)?;
+            state.sync_appliance();
+            return Ok(vec![
+                (endpoint.clone(), CapabilityKind::RobotVacuum),
+                (endpoint.clone(), CapabilityKind::Battery),
+            ]);
+        }
         if let Command::EvCharger(cmd) = cmd {
             // The charger also changes what the meters read: report them
             // all (`run` only publishes meters that really changed).
@@ -578,6 +650,10 @@ impl SimDriver {
                 };
                 cap.state = Some(OnOffState { on });
                 changed.push(CapabilityKind::OnOff);
+                if let Some(Appliance::Plug(plug)) = state.appliance.as_mut() {
+                    plug.switch(on);
+                    changed.push(CapabilityKind::PowerMeter);
+                }
             }
             Command::Level(LevelCommand::Set { level, .. }) => {
                 let cap = caps.level.as_mut().ok_or(DriverError::Unsupported)?;
@@ -748,6 +824,45 @@ impl SimDriver {
         self.lock_state().ev.is_some()
     }
 
+    fn has_appliance(&self) -> bool {
+        self.lock_state().appliance.is_some()
+    }
+
+    /// Advances the plug or robot one tick. Returns the states that
+    /// changed.
+    fn step_appliance(&self) -> Vec<(EndpointId, CapabilityState)> {
+        let noise = self
+            .rng
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .f64()
+            .mul_add(2.0, -1.0);
+        let mut state = self.lock_state();
+        let Some(appliance) = state.appliance.as_mut() else {
+            return Vec::new();
+        };
+        appliance.tick(appliance::TICK.as_secs_f64(), noise);
+        let before: Vec<(EndpointId, CapabilityKind, Option<CapabilityState>)> = state
+            .endpoints
+            .iter()
+            .flat_map(|sim| {
+                sim.endpoint
+                    .capabilities
+                    .kinds()
+                    .into_iter()
+                    .map(|kind| (sim.endpoint.id.clone(), kind, sim.state_of(kind)))
+            })
+            .collect();
+        state.sync_appliance();
+        before
+            .into_iter()
+            .filter_map(|(id, kind, previous)| {
+                let now = state.state_of(&id, kind)?;
+                (Some(&now) != previous.as_ref()).then_some((id, now))
+            })
+            .collect()
+    }
+
     /// Sets the doorbell's occupancy. Returns the new state if it exists.
     fn set_occupied(&self, occupied: bool) -> Option<CapabilityState> {
         let mut state = self.lock_state();
@@ -834,6 +949,9 @@ impl DeviceDriver for SimDriver {
         let mut clear_occupancy: Option<Instant> = None;
         let mut next_step: Option<Instant> = None;
         let mut next_ev_tick = self.has_ev().then(|| Instant::now() + ev::EV_TICK);
+        let mut next_appliance_tick = self
+            .has_appliance()
+            .then(|| Instant::now() + appliance::TICK);
         // Meter readings already on screen: a command only republishes
         // the ones it changed.
         let mut meters: HashMap<EndpointId, CapabilityState> = self
@@ -873,6 +991,15 @@ impl DeviceDriver for SimDriver {
                         sink.state(&endpoint, state).await?;
                     }
                 }
+                () = sleep_until_opt(next_appliance_tick) => {
+                    next_appliance_tick = Some(Instant::now() + appliance::TICK);
+                    for (endpoint, state) in self.step_appliance() {
+                        if state.kind() == CapabilityKind::PowerMeter {
+                            meters.insert(endpoint.clone(), state.clone());
+                        }
+                        sink.state(&endpoint, state).await?;
+                    }
+                }
                 () = sleep_until_opt(next_step) => {
                     next_step = None;
                     for (endpoint, state) in self.step_covers() {
@@ -897,7 +1024,9 @@ impl DeviceDriver for SimDriver {
 
 /// The built-in simulated home: lights, a ceiling fan with a light, a
 /// blind, a garage door, a door strike, a doorbell that rings every
-/// 3 minutes and an EV charger with solar panels. Every device uses the `sim` driver, so there are no secrets.
+/// 3 minutes, two plugs (one only watched), a robot vacuum and an EV
+/// charger with solar panels. Every device uses the `sim` driver, so there
+/// are no secrets.
 pub mod demo {
     /// `config.json` of the simulated home.
     pub const CONFIG: &str = include_str!("../fixtures/demo-config.json");

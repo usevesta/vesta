@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import type { CapabilityKind, Dashboard, EndpointType, Target, Widget } from '@/api/generated'
 import type { SaveDashboard } from '@/editor/editor-store'
 import type { HomeItem } from '@/editor/model'
+import type { DemoPlugId } from '@/demo/demo-appliances'
 import type { DemoCoverId, DemoDoorId, DemoFanId, DemoLightId } from '@/demo/demo-store'
 import type { IconName } from '@/lib/icons'
 
@@ -19,6 +20,8 @@ export type DemoThing =
   | { readonly kind: 'door'; readonly id: DemoDoorId }
   | { readonly kind: 'camera'; readonly unavailable: boolean }
   | { readonly kind: 'ev' }
+  | { readonly kind: 'plug'; readonly id: DemoPlugId }
+  | { readonly kind: 'robot' }
 
 type DemoName = keyof ReturnType<typeof demoNames>
 type DemoRoom = keyof ReturnType<typeof demoRooms>
@@ -49,6 +52,9 @@ function demoNames(t: TFunction) {
     frontDoorCamera: t('demo.devices.frontDoorCamera'),
     gardenCamera: t('demo.devices.gardenCamera'),
     carCharger: t('demo.devices.carCharger'),
+    hallLamp: t('demo.devices.hallLamp'),
+    washingMachine: t('demo.devices.washingMachine'),
+    robotVacuum: t('demo.devices.robotVacuum'),
   }
 }
 
@@ -61,6 +67,7 @@ function demoRooms(t: TFunction) {
     garage: t('demo.rooms.garage'),
     entrance: t('demo.rooms.entrance'),
     outside: t('demo.rooms.outside'),
+    utility: t('demo.rooms.utility'),
   }
 }
 
@@ -165,6 +172,30 @@ export const DEMO_ENTRIES: readonly DemoEntry[] = [
     capabilities: ['ev_charger'],
   },
   {
+    target: 'hall_lamp/main',
+    thing: { kind: 'plug', id: 'hallLamp' },
+    name: 'hallLamp',
+    room: 'hallway',
+    type: 'outlet',
+    capabilities: ['on_off', 'power_meter'],
+  },
+  {
+    target: 'washing_machine/main',
+    thing: { kind: 'plug', id: 'washer' },
+    name: 'washingMachine',
+    room: 'utility',
+    type: 'outlet',
+    capabilities: ['on_off', 'power_meter'],
+  },
+  {
+    target: 'robot_vacuum/main',
+    thing: { kind: 'robot' },
+    name: 'robotVacuum',
+    room: 'living_room',
+    type: 'robot_vacuum',
+    capabilities: ['robot_vacuum', 'battery'],
+  },
+  {
     target: 'garden_camera/main',
     thing: { kind: 'camera', unavailable: true },
     name: 'gardenCamera',
@@ -241,6 +272,17 @@ export function demoDashboard(t: TFunction): Dashboard {
           tile('cover-control', 'bedroom_blind/main', 2, 1),
           tile('light-control', 'kitchen_light/main', 1, 1),
           tile('light-control', 'hallway_light/main', 1, 1),
+        ],
+      },
+      {
+        id: 'appliances',
+        title: t('demo.pages.appliances'),
+        icon: 'outlet',
+        grid_columns: 4,
+        widgets: [
+          tile('outlet-control', 'hall_lamp/main', 2, 1),
+          tile('outlet-control', 'washing_machine/main', 2, 1),
+          tile('robot-vacuum', 'robot_vacuum/main', 2, 1),
         ],
       },
       {

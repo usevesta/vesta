@@ -208,3 +208,54 @@ export function chargerDevice(overrides: { online?: boolean } = {}): Device {
     ],
   }
 }
+
+/** A plug with a meter, like the simulated hall lamp (or one that is only watched). */
+export function plugDevice(overrides: { readOnly?: boolean; online?: boolean } = {}): Device {
+  return {
+    id: 'hall_lamp',
+    name: 'Hall Lamp',
+    room: 'hall',
+    online: overrides.online ?? true,
+    endpoints: [
+      {
+        id: 'main',
+        name: 'Hall Lamp',
+        type: 'outlet',
+        capabilities: {
+          on_off: {
+            ...(overrides.readOnly === true ? { features: { read_only: true } } : {}),
+            state: { on: true },
+          },
+          power_meter: {
+            features: { role: 'load', bidirectional: false },
+            state: { power_w: 12.5, voltage_v: 227.2, current_a: 0.112 },
+          },
+        },
+      },
+    ],
+  }
+}
+
+/** A robot vacuum on its base (with or without controls). */
+export function robotDevice(overrides: { readOnly?: boolean } = {}): Device {
+  const control = overrides.readOnly !== true
+  return {
+    id: 'robot_vacuum',
+    name: 'Robot Vacuum',
+    online: true,
+    endpoints: [
+      {
+        id: 'main',
+        name: 'Robot Vacuum',
+        type: 'robot_vacuum',
+        capabilities: {
+          robot_vacuum: {
+            features: { start: control, pause: control, return_to_dock: control },
+            state: { status: 'docked', cleaned_area_m2: 22, cleaning_duration_s: 1_800 },
+          },
+          battery: { state: { percent: 100, low: false } },
+        },
+      },
+    ],
+  }
+}

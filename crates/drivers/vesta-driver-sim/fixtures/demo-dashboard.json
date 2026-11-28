@@ -98,6 +98,22 @@
       ]
     },
     {
+      "id": "appliances",
+      "title": "Plugs & Robot",
+      "icon": "outlet",
+      "grid_columns": 4,
+      "widgets": [
+        { "type": "outlet-control", "target": "hall_lamp/main", "col_span": 2, "row_span": 1 },
+        {
+          "type": "outlet-control",
+          "target": "washing_machine/main",
+          "col_span": 2,
+          "row_span": 1
+        },
+        { "type": "robot-vacuum", "target": "robot_vacuum/main", "col_span": 2, "row_span": 1 }
+      ]
+    },
+    {
       "id": "energy",
       "title": "Energy",
       "icon": "ev_charger",

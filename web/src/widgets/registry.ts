@@ -18,16 +18,20 @@ import { DoorButton, type DoorButtonProps } from '@/widgets/door-button/DoorButt
 import { EvCharger, type EvChargerProps } from '@/widgets/ev-charger/EvCharger'
 import { FanControl, type FanControlProps } from '@/widgets/fan-control/FanControl'
 import { LightControl, type LightControlProps } from '@/widgets/light-control/LightControl'
+import { OutletControl, type OutletControlProps } from '@/widgets/outlet-control/OutletControl'
+import { RobotVacuum, type RobotVacuumProps } from '@/widgets/robot-vacuum/RobotVacuum'
 import type { SizePreset } from '@/widgets/sizes'
 
 /** Props of every registered widget, keyed by its `type` string. */
 export interface WidgetPropsMap {
   'light-control': LightControlProps
+  'outlet-control': OutletControlProps
   'fan-control': FanControlProps
   'cover-control': CoverControlProps
   'door-button': DoorButtonProps
   'camera-preview': CameraPreviewProps
   'ev-charger': EvChargerProps
+  'robot-vacuum': RobotVacuumProps
   'clock-weather': ClockWeatherProps
 }
 
@@ -37,21 +41,25 @@ type WidgetRegistry = { readonly [K in WidgetType]: ComponentType<WidgetPropsMap
 
 export const widgetRegistry: WidgetRegistry = {
   'light-control': LightControl,
+  'outlet-control': OutletControl,
   'fan-control': FanControl,
   'cover-control': CoverControl,
   'door-button': DoorButton,
   'camera-preview': CameraPreview,
   'ev-charger': EvCharger,
+  'robot-vacuum': RobotVacuum,
   'clock-weather': ClockWeather,
 }
 
 export const WIDGET_TYPES = [
   'light-control',
+  'outlet-control',
   'fan-control',
   'cover-control',
   'door-button',
   'camera-preview',
   'ev-charger',
+  'robot-vacuum',
   'clock-weather',
 ] as const satisfies readonly WidgetType[]
 
@@ -93,12 +101,9 @@ export interface WidgetMeta {
 }
 
 export const widgetMeta: Readonly<Record<WidgetType, WidgetMeta>> = {
-  'light-control': {
-    endpointTypes: ['light', 'outlet', 'switch'],
-    needsAnyOf: ['on_off'],
-    defaultSize: 'wide',
-    icon: 'light',
-  },
+  'light-control': { endpointTypes: ['light'], needsAnyOf: ['on_off'], defaultSize: 'wide', icon: 'light' },
+  // Plugs and relays: on/off, and what they draw when they measure it.
+  'outlet-control': { endpointTypes: ['outlet', 'switch'], needsAnyOf: ['on_off'], defaultSize: 'wide', icon: 'outlet' },
   'fan-control': { endpointTypes: ['fan'], needsAnyOf: ['fan'], defaultSize: 'wide', icon: 'fan' },
   'cover-control': {
     endpointTypes: ['window_covering', 'garage_door', 'gate'],
@@ -115,6 +120,12 @@ export const widgetMeta: Readonly<Record<WidgetType, WidgetMeta>> = {
   'camera-preview': { endpointTypes: ['camera', 'doorbell'], defaultSize: 'large', icon: 'camera' },
   // Large: the energy flow and every control fit; smaller sizes open them in a dialog.
   'ev-charger': { endpointTypes: ['ev_charger'], needsAnyOf: ['ev_charger'], defaultSize: 'large', icon: 'ev_charger' },
+  'robot-vacuum': {
+    endpointTypes: ['robot_vacuum'],
+    needsAnyOf: ['robot_vacuum'],
+    defaultSize: 'wide',
+    icon: 'robot_vacuum',
+  },
   'clock-weather': { endpointTypes: [], defaultSize: 'wide', icon: 'clock' },
 }
 

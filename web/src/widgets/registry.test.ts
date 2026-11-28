@@ -31,8 +31,10 @@ describe('picking a widget for a thing in the home', () => {
 
   it('goes by endpoint type', () => {
     expect(pick('light', 'on_off', 'level', 'color_temperature')).toBe('light-control')
-    expect(pick('outlet', 'on_off', 'power_meter')).toBe('light-control')
-    expect(pick('switch', 'on_off')).toBe('light-control')
+    expect(pick('outlet', 'on_off', 'power_meter')).toBe('outlet-control')
+    expect(pick('outlet', 'on_off')).toBe('outlet-control')
+    expect(pick('switch', 'on_off')).toBe('outlet-control')
+    expect(pick('robot_vacuum', 'robot_vacuum', 'battery')).toBe('robot-vacuum')
     expect(pick('fan', 'on_off', 'fan')).toBe('fan-control')
     expect(pick('window_covering', 'cover')).toBe('cover-control')
     expect(pick('door', 'trigger')).toBe('door-button')
@@ -55,6 +57,9 @@ describe('picking a widget for a thing in the home', () => {
     // A charger type without charger data (e.g. only a meter): nothing fits.
     expect(pick('ev_charger', 'power_meter')).toBeNull()
     expect(pick('light', 'level')).toBeNull()
+    // A plug that only measures (no on/off), or a robot without its controls data.
+    expect(pick('outlet', 'power_meter')).toBeNull()
+    expect(pick('robot_vacuum', 'battery')).toBeNull()
   })
 
   it('offers nothing for things no widget can show yet', () => {

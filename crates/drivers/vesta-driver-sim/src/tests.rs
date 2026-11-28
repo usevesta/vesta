@@ -109,6 +109,9 @@ fn config_is_validated() {
         json!({ "model": "light", "colour": "red" }),
         json!({ "model": "light", "solar": true }),
         json!({ "model": "doorbell", "battery": false }),
+        json!({ "model": "light", "read_only": true }),
+        json!({ "model": "robot_vacuum", "load_w": 10.0 }),
+        json!({ "model": "smart_plug", "load_w": -1.0 }),
         json!("light"),
     ] {
         assert!(
@@ -694,6 +697,163 @@ async fn ev_charger_reports_changes_and_follows_commands() {
                 })
             )
             .await,
+        Err(DriverError::Unsupported)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn smart_plug_switches_and_measures() {
+    use vesta_core::PowerMeterState;
+
+    fn meter(change: &StateChange) -> PowerMeterState {
+        match &change.state {
+            CapabilityState::PowerMeter(state) => *state,
+            other => panic!("expected a meter reading, got {other:?}"),
+        }
+    }
+
+    let plug =
+        driver(json!({ "model": "smart_plug", "latency_ms": 0, "load_w": 100.0, "seed": 3 }));
+    let main = ep("main");
+    let described = plug.describe().endpoints;
+    assert_eq!(described[0].endpoint_type, EndpointType::Outlet);
+    assert!(
+        !described[0]
+            .capabilities
+            .on_off
+            .as_ref()
+            .unwrap()
+            .read_only()
+    );
+    assert_eq!(
+        described[0]
+            .capabilities
+            .power_meter
+            .as_ref()
+            .unwrap()
+            .features
+            .role,
+        vesta_core::MeterRole::Load
+    );
+
+    let mut sim = run(&plug);
+    sim.skip_initial(2).await;
+    plug.execute(&main, Command::OnOff(OnOffCommand::Off))
+        .await
+        .unwrap();
+    assert_eq!(
+        sim.next_state().await.state,
+        OnOffState { on: false }.into()
+    );
+    let off = meter(&sim.next_state().await);
+    assert_eq!(off.power_w, 0.0);
+    assert_eq!(off.voltage_v, Some(230.0));
+
+    plug.execute(&main, Command::OnOff(OnOffCommand::On))
+        .await
+        .unwrap();
+    assert_eq!(sim.next_state().await.state, OnOffState { on: true }.into());
+    let on = meter(&sim.next_state().await);
+    assert!((97.0..=103.0).contains(&on.power_w), "{on:?}");
+    assert!(
+        on.current_a
+            .is_some_and(|amps| (0.42..=0.45).contains(&amps))
+    );
+    // While on, the reading moves a little with every tick and energy adds up.
+    let later = meter(&sim.next_state().await);
+    assert!((97.0..=103.0).contains(&later.power_w), "{later:?}");
+    assert!(later.energy_wh >= on.energy_wh);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_watched_plug_and_robot_refuse_every_command() {
+    let plug = driver(json!({ "model": "smart_plug", "read_only": true, "latency_ms": 0 }));
+    let caps = plug.describe().endpoints[0].capabilities.clone();
+    assert!(caps.on_off.as_ref().unwrap().read_only());
+    assert!(matches!(
+        plug.execute(&ep("main"), Command::OnOff(OnOffCommand::Toggle))
+            .await,
+        Err(DriverError::Unsupported)
+    ));
+
+    let robot = driver(json!({ "model": "robot_vacuum", "read_only": true, "latency_ms": 0 }));
+    let features = robot.describe().endpoints[0]
+        .capabilities
+        .robot_vacuum
+        .as_ref()
+        .unwrap()
+        .features;
+    assert!(!features.start && !features.pause && !features.return_to_dock);
+    assert!(matches!(
+        robot
+            .execute(
+                &ep("main"),
+                Command::RobotVacuum(vesta_core::RobotVacuumCommand::Start)
+            )
+            .await,
+        Err(DriverError::Unsupported)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn robot_vacuum_cleans_and_goes_home() {
+    use vesta_core::{RobotVacuumCommand, RobotVacuumStatus};
+
+    fn status(change: &StateChange) -> Option<RobotVacuumStatus> {
+        match &change.state {
+            CapabilityState::RobotVacuum(state) => Some(state.status),
+            _ => None,
+        }
+    }
+
+    let robot = driver(json!({ "model": "robot_vacuum", "latency_ms": 0 }));
+    let described = robot.describe().endpoints;
+    assert_eq!(described[0].endpoint_type, EndpointType::RobotVacuum);
+    assert_eq!(
+        described[0].capabilities.kinds(),
+        vec![CapabilityKind::Battery, CapabilityKind::RobotVacuum]
+    );
+    let mut sim = run(&robot);
+    sim.skip_initial(2).await;
+    let main = ep("main");
+
+    robot
+        .execute(&main, Command::RobotVacuum(RobotVacuumCommand::Start))
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&sim.next_state().await),
+        Some(RobotVacuumStatus::Cleaning)
+    );
+    robot
+        .execute(&main, Command::RobotVacuum(RobotVacuumCommand::Pause))
+        .await
+        .unwrap();
+    loop {
+        if status(&sim.next_state().await) == Some(RobotVacuumStatus::Paused) {
+            break;
+        }
+    }
+    robot
+        .execute(
+            &main,
+            Command::RobotVacuum(RobotVacuumCommand::ReturnToDock),
+        )
+        .await
+        .unwrap();
+    loop {
+        if status(&sim.next_state().await) == Some(RobotVacuumStatus::Returning) {
+            break;
+        }
+    }
+    // Home, charging, then charged.
+    loop {
+        if status(&sim.next_state().await) == Some(RobotVacuumStatus::Docked) {
+            break;
+        }
+    }
+    assert!(matches!(
+        robot.execute(&main, Command::OnOff(OnOffCommand::On)).await,
         Err(DriverError::Unsupported)
     ));
 }

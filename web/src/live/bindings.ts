@@ -130,6 +130,70 @@ function bindKnown(
       }
     }
 
+    case 'outlet-control': {
+      const onOff = capabilities?.on_off
+      const meter = capabilities?.power_meter?.state
+      // A plug that is only watched gets no switch (the home would refuse it).
+      const switchable = onOff !== undefined && onOff.features?.read_only !== true
+      return {
+        type,
+        props: {
+          ...status,
+          unavailable: status.unavailable || onOff === undefined,
+          label,
+          icon: iconFor(widget, view),
+          on: onOff?.state?.on,
+          onToggle: switchable
+            ? (on) => {
+                run({ capability: 'on_off', action: on ? 'on' : 'off' })
+              }
+            : undefined,
+          powerW: meter?.power_w,
+          energyWh: meter?.energy_wh,
+          voltageV: meter?.voltage_v,
+          currentA: meter?.current_a,
+        },
+      }
+    }
+
+    case 'robot-vacuum': {
+      const robot = capabilities?.robot_vacuum
+      const features = robot?.features
+      const battery = capabilities?.battery?.state
+      return {
+        type,
+        props: {
+          ...status,
+          unavailable: status.unavailable || robot === undefined,
+          label,
+          icon: iconFor(widget, view, 'robot_vacuum'),
+          status: robot?.state?.status,
+          batteryPercent: battery?.percent,
+          batteryLow: battery?.low,
+          cleanedAreaM2: robot?.state?.cleaned_area_m2,
+          cleaningDurationS: robot?.state?.cleaning_duration_s,
+          onStart:
+            features?.start === true
+              ? () => {
+                  run({ capability: 'robot_vacuum', action: 'start' })
+                }
+              : undefined,
+          onPause:
+            features?.pause === true
+              ? () => {
+                  run({ capability: 'robot_vacuum', action: 'pause' })
+                }
+              : undefined,
+          onReturnToDock:
+            features?.return_to_dock === true
+              ? () => {
+                  run({ capability: 'robot_vacuum', action: 'return_to_dock' })
+                }
+              : undefined,
+        },
+      }
+    }
+
     case 'fan-control': {
       const onOff = capabilities?.on_off
       const fan = capabilities?.fan

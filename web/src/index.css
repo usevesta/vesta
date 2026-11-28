@@ -333,6 +333,20 @@
       display: inline;
     }
   }
+
+  /*
+   * A robot vacuum at work: a light going back and forth along a thin bar
+   * (transform only). Still when motion is reduced.
+   */
+  .robot-sweep {
+    animation: robot-sweep 2.4s ease-in-out infinite alternate;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .robot-sweep {
+      animation: none;
+      transform: translateX(100%);
+    }
+  }
 }
 
 @keyframes energy-beads {
@@ -366,5 +380,13 @@
   }
   to {
     transform: translateX(250%);
+  }
+}
+@keyframes robot-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(200%);
   }
 }

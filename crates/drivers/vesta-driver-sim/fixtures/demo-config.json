@@ -56,6 +56,27 @@
       "config": { "model": "doorbell", "ring_every_sec": 180 }
     },
     {
+      "id": "hall_lamp",
+      "name": "Hall Lamp",
+      "room": "entrance",
+      "driver": "sim",
+      "config": { "model": "smart_plug", "load_w": 42.0 }
+    },
+    {
+      "id": "washing_machine",
+      "name": "Washing Machine",
+      "room": "utility_room",
+      "driver": "sim",
+      "config": { "model": "smart_plug", "load_w": 480.0, "read_only": true }
+    },
+    {
+      "id": "robot_vacuum",
+      "name": "Robot Vacuum",
+      "room": "living_room",
+      "driver": "sim",
+      "config": { "model": "robot_vacuum" }
+    },
+    {
       "id": "car_charger",
       "name": "Car Charger",
       "room": "garage",
