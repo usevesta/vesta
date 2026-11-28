@@ -78,6 +78,8 @@ down.
   (`v2charge.com/es/actualizaciones-trydan/`) add nothing about them to the HTTP API.
   `pytrydan` (MIT) and Home Assistant's `v2c` integration only switch `Timer` ("set on the
   mobile application"); evcc reads `Timer` and runs its own scheduling.
+  A real Trydan on firmware 2.5.2 (read-only check of `RealTimeData`, 2026-11) reports `Timer`
+  and no field with hours or days.
 - **Cloud API** (`api.v2charge.com`, source `github.com/V2Charge/API-doc-v2c`, `openapi.yaml`):
   base `https://v2c.cloud/kong/v2c_service`, header `apikey: <key>` (missing or wrong: `401`),
   **1000 calls per day** per user (`RateLimit-Limit` / `RateLimit-Remaining` headers).
