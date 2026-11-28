@@ -4070,6 +4070,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin"
+version = "2.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c18076d9b04211cb4899387aab97497e8edd0d02cd21710623afcdde27145d1"
+dependencies = [
+ "anyhow",
+ "glob",
+ "plist",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri-utils",
+ "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-vesta-panel"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
 name = "tauri-runtime"
 version = "2.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4175,7 +4200,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -4717,6 +4742,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-vesta-panel",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

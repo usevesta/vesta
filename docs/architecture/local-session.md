@@ -58,7 +58,11 @@ the shell signs the panel in again on launch. No secret ever reaches JavaScript:
 - Its page gets Tauri IPC for the kiosk commands (`kiosk_*`) and nothing else. For the Hub's
   page, which Tauri treats as a remote origin, that capability is added at runtime for the
   **exact** origin the shell just bound (`http://127.0.0.1:<port>`), never a pattern such as
-  `http://127.0.0.1:*`.
+  `http://127.0.0.1:*`. On Android the page reaches the shell through the WebView's
+  `postMessage` bridge, which reports the sender's origin, and Tauri checks the same capability.
+- On Android, plain HTTP is allowed only to `127.0.0.1` and `localhost`, in debug and release
+  builds (a network security config in `apps/tauri/plugins/panel`); every other host needs TLS.
+  The remembered port lives in the app's private data folder (`/data/user/0/com.usevesta.app/`).
 - The UI's `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self'
   'unsafe-inline'` (UI libraries insert `<style>` elements); `connect-src 'self'` plus, in the
   app, Tauri's IPC transport (`ipc:`, `http://ipc.localhost`); `object-src 'none'; base-uri

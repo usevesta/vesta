@@ -53,6 +53,17 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<(InProcessHub, Pa
     let dev_url = tauri::is_dev()
         .then(|| app.config().build.dev_url.clone())
         .flatten();
+    // Tauri's mobile dev mode loads dev server pages through its own
+    // `http://tauri.localhost` proxy, which drops the login path, and the
+    // dev server would send `/api` to the computer's loopback, not to this
+    // device. Fail loudly instead of showing a blank panel.
+    #[cfg(target_os = "android")]
+    if dev_url.is_some() {
+        bail!(
+            "`tauri android dev` does not work with the in-process hub: build and install a debug \
+             APK instead (README, \"Android\")"
+        );
+    }
 
     let mut options = HubOptions {
         auth: ApiAuth::Sessions,

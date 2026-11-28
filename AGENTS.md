@@ -22,7 +22,7 @@ Open-source (Apache-2.0), local-first smart home wall panel built with **Tauri v
 - `crates/vesta-drivers`: Composition root that registers driver factories (one Cargo feature per driver). The **only** place that maps a config `driver` string to a driver crate.
 - `crates/drivers/*`: One isolated crate per protocol/vendor (e.g. `vesta-driver-tuya`, `vesta-driver-shelly`, `vesta-driver-onvif`). Drivers MUST NOT depend on each other or on UI/server crates. Drivers are hub-only.
 - `apps/hubd`: Headless hub binary (`vesta-hubd`) without Tauri/WebView. Used for Linux deployments and as the fast development loop.
-- `apps/tauri`: Tauri v2 shell (`com.usevesta.app`) and Cargo feature gates. Native code lives in Tauri plugins, not in hand-edited generated projects:
+- `apps/tauri`: Tauri v2 shell (`com.usevesta.app`) and Cargo feature gates. Native code lives in Tauri plugins (`apps/tauri/plugins/*`, e.g. `tauri-plugin-vesta-panel`), not in hand-edited generated projects (`src-tauri/gen/*` is committed CLI output):
   - Android (Kotlin): Foreground Service hosting the Hub, WakeLock, LockTask kiosk (Device Owner), silent OTA via `PackageInstaller`.
   - iOS/iPadOS (Swift): idle timer, screen brightness, Guided Access detection.
 - `web`: React + TypeScript + Vite + Tailwind + `shadcn/ui`. No other component libraries.
@@ -92,8 +92,11 @@ Open-source (Apache-2.0), local-first smart home wall panel built with **Tauri v
 - **Lint & Format Rust:** `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - **Run Rust tests:** `cargo test --workspace --all-features`
 - **Frontend typecheck & lint:** `cd web && pnpm typecheck && pnpm lint`
-- **Build Android Hub (Tablet):** `cd apps/tauri && pnpm tauri android build -- --features hub`
-- **Build Mobile Client (iOS):** `cd apps/tauri && pnpm tauri ios build` (without `hub`)
+- **Build Android Hub (Tablet), debug APK:** `cd apps/tauri && pnpm tauri android build --debug --target aarch64 --apk --features hub` (needs `ANDROID_HOME`, `NDK_HOME`, a JDK 17 in `JAVA_HOME`; see README)
+- **Run it on a device or emulator:** `adb install -r apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && adb shell am start -n com.usevesta.app/.MainActivity`, logs with `adb logcat -s RustStdoutStderr:V Tauri/Console:V`. `pnpm tauri android dev` does not work with `hub` (README explains why).
+- **Lint the Android build:** `cargo clippy -p vesta-app --target aarch64-linux-android --features hub -- -D warnings`
+- **Android native code:** `apps/tauri/plugins/panel` (Tauri plugin, Kotlin). `apps/tauri/src-tauri/gen/android` is CLI output: regenerate it (`pnpm tauri android init`), never hand-edit it.
+- **Build Mobile Client (iOS, not set up yet):** `cd apps/tauri && pnpm tauri ios build` (without `hub`)
 
 ## PR & Contribution Guidelines
 - Keep PRs focused: one driver, one widget, or one theme per PR.
