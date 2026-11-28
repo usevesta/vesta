@@ -263,6 +263,8 @@ export const en = {
     contracted: 'Contracted power',
     contractedValue: '{{used}} of {{limit}} kW',
     nearLimit: 'Close to your contracted power. The charger slows down by itself.',
+    overLimit: 'Above your contracted power.',
+    overLimitLowering: 'Above your contracted power. The charger is lowering the charge.',
     session: 'This charge',
     energy: 'Energy',
     time: 'Time',

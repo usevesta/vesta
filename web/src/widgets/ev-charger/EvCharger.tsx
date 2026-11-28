@@ -18,6 +18,7 @@ import {
   formatKw,
   formatKwh,
   headroom,
+  limitNoteKey,
   splitDuration,
   statusKey,
   type EnergyReadings,
@@ -136,13 +137,22 @@ function useSession(props: EvChargerProps) {
   return { energy, time, now, set }
 }
 
-function HeadroomBar({ room }: { room: Headroom }) {
+/** Bar, words and color per level: warning when close, a stronger one above it. */
+const LIMIT_STYLE = {
+  normal: { bar: 'bg-energy-house/60', text: '' },
+  near: { bar: 'bg-warning', text: 'text-warning' },
+  over: { bar: 'bg-warning-strong', text: 'text-warning-strong' },
+} as const
+
+function HeadroomBar({ room, status, autoCurrent }: { room: Headroom } & Pick<EvChargerProps, 'status' | 'autoCurrent'>) {
   const { t, i18n } = useTranslation()
+  const note = limitNoteKey(room.level, { status, autoCurrent })
+  const style = LIMIT_STYLE[room.level]
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-slot="contracted-power" data-level={room.level}>
       <div className="flex items-baseline justify-between gap-2 text-sm">
         <span className="text-muted-foreground">{t('ev.contracted')}</span>
-        <span className="font-medium tabular-nums">
+        <span className={cn('font-medium tabular-nums', style.text)}>
           {t('ev.contractedValue', {
             used: formatKw(room.usedW, i18n.language),
             limit: formatKw(room.limitW, i18n.language),
@@ -152,16 +162,16 @@ function HeadroomBar({ room }: { room: Headroom }) {
       <span className="energy-layer block h-2 overflow-hidden rounded-full bg-muted">
         <span
           className={cn(
-            'block h-full origin-left rounded-full transition-[transform,background-color] duration-700',
-            room.nearLimit ? 'bg-energy-limit' : 'bg-energy-house/60',
+            'block h-full origin-left rounded-full transition-[transform,background-color] duration-700 motion-reduce:transition-none',
+            style.bar,
           )}
           style={{ transform: `scaleX(${String(room.ratio)})` }}
         />
       </span>
-      {room.nearLimit && (
-        <p className="flex items-start gap-1.5 text-sm leading-snug text-energy-limit">
+      {note !== null && (
+        <p role="status" className={cn('flex items-start gap-1.5 text-sm leading-snug', style.text)}>
           <Icon name="info" className="mt-0.5 size-4 shrink-0" />
-          {t('ev.nearLimit')}
+          {t(note)}
         </p>
       )}
     </div>
@@ -211,7 +221,7 @@ function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { setti
     >
       <section className="flex flex-col gap-4" aria-label={t('ev.flowTitle')}>
         {picture}
-        {room !== null && <HeadroomBar room={room} />}
+        {room !== null && <HeadroomBar room={room} status={status} autoCurrent={props.autoCurrent} />}
       </section>
       <section className="flex flex-col gap-5">
         <div className="flex flex-col gap-2">

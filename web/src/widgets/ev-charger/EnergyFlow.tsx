@@ -269,7 +269,9 @@ export function EnergyFlow({ readings, frozen = false, className }: EnergyFlowPr
   const kw = (watts: number) => t('ev.kw', { value: formatKw(watts, i18n.language) })
   const houseW = houseConsumption(readings)
   const room = headroom(readings)
-  const near = room?.nearLimit === true
+  const level = room?.level ?? 'normal'
+  const gaugeStroke = { normal: 'stroke-energy-house/70', near: 'stroke-warning', over: 'stroke-warning-strong' }[level]
+  const houseIcon = { normal: STYLE.house.text, near: 'text-warning', over: 'text-warning-strong' }[level]
 
   const names: Record<FlowNode, string> = {
     grid: t('ev.nodes.grid'),
@@ -303,7 +305,7 @@ export function EnergyFlow({ readings, frozen = false, className }: EnergyFlowPr
             cx={house.x}
             cy={house.y}
             r={GAUGE_R}
-            className={cn('energy-gauge', near ? 'stroke-energy-limit' : 'stroke-energy-house/70')}
+            className={cn('energy-gauge', gaugeStroke)}
             strokeWidth={4}
             strokeLinecap="round"
             strokeDasharray={`${String(room.ratio * GAUGE_LENGTH)} ${String(GAUGE_LENGTH)}`}
@@ -324,7 +326,7 @@ export function EnergyFlow({ readings, frozen = false, className }: EnergyFlowPr
           y={house.y - 19}
           size={20}
           strokeWidth={1.8}
-          className={near ? 'text-energy-limit' : STYLE.house.text}
+          className={houseIcon}
         />
         <text
           x={house.x}

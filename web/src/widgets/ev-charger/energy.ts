@@ -102,13 +102,26 @@ export function houseConsumption(readings: EnergyReadings): number | undefined {
 /** From this share of the contracted power on, the widget mentions it (gently). */
 export const NEAR_LIMIT = 0.9
 
+/**
+ * Where the home is against its contracted power: well within it, close
+ * to it (from 90 %), or above it (over 100 %). Informative only: the meter
+ * tolerates short peaks, and the charger's own control does the rest.
+ */
+export type LimitLevel = 'normal' | 'near' | 'over'
+
+export function limitLevel(usedW: number, limitW: number): LimitLevel {
+  const share = usedW / limitW
+  if (share > 1) return 'over'
+  return share >= NEAR_LIMIT ? 'near' : 'normal'
+}
+
 export interface Headroom {
   /** Power taken from the grid now, W (never negative). */
   readonly usedW: number
   readonly limitW: number
   /** `usedW / limitW`, 0…1 (capped). */
   readonly ratio: number
-  readonly nearLimit: boolean
+  readonly level: LimitLevel
 }
 
 /** How much of the contracted power the home uses, when both are known. */
@@ -117,7 +130,30 @@ export function headroom(readings: EnergyReadings): Headroom | null {
   if (gridW === undefined || limitW === undefined || !(limitW > 0)) return null
   const usedW = Math.max(0, gridW)
   const ratio = Math.min(1, usedW / limitW)
-  return { usedW, limitW, ratio, nearLimit: usedW / limitW >= NEAR_LIMIT }
+  return { usedW, limitW, ratio, level: limitLevel(usedW, limitW) }
+}
+
+/** Translation key for the note under the contracted power. */
+export type LimitNoteKey = 'ev.nearLimit' | 'ev.overLimit' | 'ev.overLimitLowering'
+
+/**
+ * What to say about the contracted power, or null when there is nothing to
+ * say. Above it, "the charger is lowering the charge" only when that is
+ * what happens: the car charges and the charger's own power control sets
+ * the current.
+ */
+export function limitNoteKey(
+  level: LimitLevel,
+  charger: { readonly status?: EvChargerStatus; readonly autoCurrent?: boolean },
+): LimitNoteKey | null {
+  switch (level) {
+    case 'normal':
+      return null
+    case 'near':
+      return 'ev.nearLimit'
+    case 'over':
+      return charger.status === 'charging' && charger.autoCurrent === true ? 'ev.overLimitLowering' : 'ev.overLimit'
+  }
 }
 
 /** Translation key for the status line. */

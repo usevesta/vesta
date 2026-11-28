@@ -11,5 +11,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    // The theme test reads the stylesheet as text (`?raw`).
+    css: { include: [/index\.css/] },
   },
 })

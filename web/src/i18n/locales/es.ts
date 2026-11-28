@@ -262,6 +262,8 @@ export const es: Translation = {
     contracted: 'Potencia contratada',
     contractedValue: '{{used}} de {{limit}} kW',
     nearLimit: 'Cerca de tu potencia contratada. El cargador baja solo.',
+    overLimit: 'Por encima de tu potencia contratada.',
+    overLimitLowering: 'Por encima de tu potencia contratada. El cargador está bajando la carga.',
     session: 'Esta carga',
     energy: 'Energía',
     time: 'Tiempo',

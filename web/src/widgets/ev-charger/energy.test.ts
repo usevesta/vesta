@@ -10,6 +10,8 @@ import {
   formatKwh,
   headroom,
   houseConsumption,
+  limitLevel,
+  limitNoteKey,
   speedStep,
   splitDuration,
   statusKey,
@@ -77,14 +79,34 @@ describe('contracted power', () => {
       usedW: 2_875,
       limitW: 5_750,
       ratio: 0.5,
-      nearLimit: false,
+      level: 'normal',
     })
-    expect(headroom({ gridW: 5_300, limitW: 5_750 })?.nearLimit).toBe(true)
-    expect(headroom({ gridW: 6_000, limitW: 5_750 })?.ratio).toBe(1)
+    expect(headroom({ gridW: 5_300, limitW: 5_750 })?.level).toBe('near')
+    expect(headroom({ gridW: 6_000, limitW: 5_750 })).toMatchObject({ ratio: 1, level: 'over' })
     // Sending power to the grid uses none of it.
     expect(headroom({ gridW: -800, limitW: 5_750 })?.usedW).toBe(0)
     expect(headroom({ gridW: 1_000 })).toBeNull()
     expect(headroom({ gridW: 1_000, limitW: 0 })).toBeNull()
+  })
+
+  it('has three levels: within, close to (from 90 %) and above (over 100 %)', () => {
+    expect(limitLevel(5_129, 5_700)).toBe('normal')
+    expect(limitLevel(5_130, 5_700)).toBe('near')
+    expect(limitLevel(5_700, 5_700)).toBe('near')
+    expect(limitLevel(5_701, 5_700)).toBe('over')
+    expect(limitLevel(5_739, 5_700)).toBe('over')
+  })
+
+  it('says the charger is lowering the charge only when it is', () => {
+    const lowering = { status: 'charging', autoCurrent: true } as const
+    expect(limitNoteKey('normal', lowering)).toBeNull()
+    expect(limitNoteKey('near', lowering)).toBe('ev.nearLimit')
+    expect(limitNoteKey('over', lowering)).toBe('ev.overLimitLowering')
+    // The car is not charging, or the charger does not control its current.
+    expect(limitNoteKey('over', { status: 'charging', autoCurrent: false })).toBe('ev.overLimit')
+    expect(limitNoteKey('over', { status: 'waiting', autoCurrent: true })).toBe('ev.overLimit')
+    expect(limitNoteKey('over', { status: 'disconnected' })).toBe('ev.overLimit')
+    expect(limitNoteKey('over', {})).toBe('ev.overLimit')
   })
 })
 
