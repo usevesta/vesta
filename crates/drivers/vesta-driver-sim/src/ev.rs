@@ -360,10 +360,8 @@ impl EvSim {
 
 fn meter(power_w: f64, limit_w: Option<f64>) -> PowerMeterState {
     PowerMeterState {
-        power_w: round_w(power_w),
-        energy_wh: None,
-        energy_exported_wh: None,
         limit_w,
+        ..PowerMeterState::power(round_w(power_w))
     }
 }
 

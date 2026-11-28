@@ -10,7 +10,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::command::{Command, CoverCommand, EvChargerCommand, FanCommand, LockCommand};
+use crate::command::{
+    Command, CoverCommand, EvChargerCommand, FanCommand, LockCommand, RobotVacuumCommand,
+};
 use crate::units::{Hue, Percent};
 
 /// Name of a capability, as used for the keys of [`Capabilities`].
@@ -34,10 +36,11 @@ pub enum CapabilityKind {
     PowerMeter,
     EvCharger,
     Battery,
+    RobotVacuum,
 }
 
 impl CapabilityKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::OnOff,
         Self::Level,
         Self::ColorTemperature,
@@ -55,6 +58,7 @@ impl CapabilityKind {
         Self::PowerMeter,
         Self::EvCharger,
         Self::Battery,
+        Self::RobotVacuum,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -76,6 +80,7 @@ impl CapabilityKind {
             Self::PowerMeter => "power_meter",
             Self::EvCharger => "ev_charger",
             Self::Battery => "battery",
+            Self::RobotVacuum => "robot_vacuum",
         }
     }
 }
@@ -94,8 +99,34 @@ impl fmt::Display for CapabilityKind {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
 pub struct OnOffCapability {
+    /// Omitted when VESTA may switch it (the usual case).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<OnOffFeatures>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<OnOffState>,
+}
+
+impl OnOffCapability {
+    /// Switchable, with a known state.
+    pub const fn with_state(on: bool) -> Self {
+        Self {
+            features: None,
+            state: Some(OnOffState { on }),
+        }
+    }
+
+    /// VESTA may only watch it: `on`, `off` and `toggle` are refused.
+    pub fn read_only(&self) -> bool {
+        self.features.is_some_and(|features| features.read_only)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+pub struct OnOffFeatures {
+    /// The device is set up for monitoring only (e.g. `read_only` in its
+    /// driver config): its state is shown, but it is never switched from
+    /// VESTA, so the UI shows no switch.
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -398,6 +429,26 @@ pub struct PowerMeterState {
     /// meter) keep doing it (AGENTS.md rule 7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit_w: Option<f64>,
+    /// Measured voltage, in V, when the meter reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voltage_v: Option<f64>,
+    /// Measured current, in A, when the meter reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_a: Option<f64>,
+}
+
+impl PowerMeterState {
+    /// Only power is known.
+    pub const fn power(power_w: f64) -> Self {
+        Self {
+            power_w,
+            energy_wh: None,
+            energy_exported_wh: None,
+            limit_w: None,
+            voltage_v: None,
+            current_a: None,
+        }
+    }
 }
 
 /// `ev_charger`: an EV charger (Matter: EnergyEVSE). The charger's own
@@ -579,6 +630,63 @@ pub struct BatteryState {
     pub low: bool,
 }
 
+/// `robot_vacuum`: a robot vacuum cleaner (Matter: RVC Operational State and
+/// RVC Run Mode). Its charge is a `battery` capability on the same
+/// endpoint. Every command needs its feature: a robot set up for monitoring
+/// only reports them all `false`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct RobotVacuumCapability {
+    pub features: RobotVacuumFeatures,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<RobotVacuumState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RobotVacuumFeatures {
+    /// `start` works (starts cleaning, or carries on after a pause).
+    pub start: bool,
+    /// `pause` works.
+    pub pause: bool,
+    /// `return_to_dock` works.
+    pub return_to_dock: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct RobotVacuumState {
+    pub status: RobotVacuumStatus,
+    /// Area cleaned in the current (or last) cleaning, in m².
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleaned_area_m2: Option<f64>,
+    /// Length of the current (or last) cleaning, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleaning_duration_s: Option<u64>,
+}
+
+/// What the robot is doing (Matter: RVC Operational State, plus RVC Run
+/// Mode for `cleaning` and `idle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RobotVacuumStatus {
+    /// On its dock, fully charged (Matter: Docked).
+    Docked,
+    /// On its dock, charging (Matter: Charging).
+    Charging,
+    /// Cleaning, or on its way to clean a spot (Matter: Running).
+    Cleaning,
+    /// Paused by someone; `start` carries on (Matter: Paused).
+    Paused,
+    /// On its way back to the dock (Matter: SeekingCharger).
+    Returning,
+    /// Off the dock and not cleaning, e.g. standing by or asleep (Matter:
+    /// Stopped).
+    Idle,
+    /// Stuck or needs attention, e.g. a full bin or a tangled brush (Matter:
+    /// Error).
+    Error,
+}
+
 // ---------------------------------------------------------------------------
 // Capability map
 // ---------------------------------------------------------------------------
@@ -623,6 +731,8 @@ pub struct Capabilities {
     pub ev_charger: Option<EvChargerCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery: Option<BatteryCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub robot_vacuum: Option<RobotVacuumCapability>,
 }
 
 impl Capabilities {
@@ -645,6 +755,7 @@ impl Capabilities {
             CapabilityKind::PowerMeter => self.power_meter.is_some(),
             CapabilityKind::EvCharger => self.ev_charger.is_some(),
             CapabilityKind::Battery => self.battery.is_some(),
+            CapabilityKind::RobotVacuum => self.robot_vacuum.is_some(),
         }
     }
 
@@ -661,7 +772,7 @@ impl Capabilities {
     /// when this is false.
     pub fn supports(&self, command: &Command) -> bool {
         match command {
-            Command::OnOff(_) => self.on_off.is_some(),
+            Command::OnOff(_) => self.on_off.as_ref().is_some_and(|cap| !cap.read_only()),
             Command::Level(_) => self.level.is_some(),
             Command::ColorTemperature(_) => self.color_temperature.is_some(),
             Command::Color(_) => self.color.is_some(),
@@ -687,6 +798,14 @@ impl Capabilities {
                     EvChargerCommand::SetMode { mode } => features.modes.contains(mode),
                     EvChargerCommand::Lock | EvChargerCommand::Unlock => features.lock,
                     EvChargerCommand::SetSchedule { .. } => features.schedule,
+                }
+            }),
+            Command::RobotVacuum(cmd) => self.robot_vacuum.as_ref().is_some_and(|cap| {
+                let features = cap.features;
+                match cmd {
+                    RobotVacuumCommand::Start => features.start,
+                    RobotVacuumCommand::Pause => features.pause,
+                    RobotVacuumCommand::ReturnToDock => features.return_to_dock,
                 }
             }),
         }
@@ -722,6 +841,7 @@ impl Capabilities {
             CapabilityState::PowerMeter(s) => set!(power_meter, s),
             CapabilityState::EvCharger(s) => set!(ev_charger, s),
             CapabilityState::Battery(s) => set!(battery, s),
+            CapabilityState::RobotVacuum(s) => set!(robot_vacuum, s),
         }
     }
 }
@@ -746,6 +866,7 @@ pub enum CapabilityState {
     PowerMeter(PowerMeterState),
     EvCharger(EvChargerState),
     Battery(BatteryState),
+    RobotVacuum(RobotVacuumState),
 }
 
 impl CapabilityState {
@@ -766,6 +887,7 @@ impl CapabilityState {
             Self::PowerMeter(_) => CapabilityKind::PowerMeter,
             Self::EvCharger(_) => CapabilityKind::EvCharger,
             Self::Battery(_) => CapabilityKind::Battery,
+            Self::RobotVacuum(_) => CapabilityKind::RobotVacuum,
         }
     }
 }
@@ -798,6 +920,7 @@ state_from! {
     PowerMeterState => PowerMeter,
     EvChargerState => EvCharger,
     BatteryState => Battery,
+    RobotVacuumState => RobotVacuum,
 }
 
 #[cfg(test)]
@@ -805,7 +928,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::command::{LevelCommand, TriggerCommand};
+    use crate::command::{LevelCommand, OnOffCommand, TriggerCommand};
 
     fn fan_light() -> Capabilities {
         Capabilities {
@@ -1018,5 +1141,94 @@ mod tests {
             ..charger_features()
         };
         assert!(all.iter().all(|cmd| !caps(&read_only).supports(cmd)));
+    }
+    #[test]
+    fn read_only_switches_refuse_every_on_off_command() {
+        let switchable = Capabilities {
+            on_off: Some(OnOffCapability::with_state(true)),
+            ..Capabilities::default()
+        };
+        let watched = Capabilities {
+            on_off: Some(OnOffCapability {
+                features: Some(OnOffFeatures { read_only: true }),
+                state: Some(OnOffState { on: true }),
+            }),
+            ..Capabilities::default()
+        };
+        for action in [OnOffCommand::On, OnOffCommand::Off, OnOffCommand::Toggle] {
+            assert!(switchable.supports(&Command::OnOff(action)));
+            assert!(!watched.supports(&Command::OnOff(action)));
+        }
+        // Switchable is the default: no features on the wire.
+        assert_eq!(
+            serde_json::to_value(&switchable).unwrap(),
+            json!({ "on_off": { "state": { "on": true } } })
+        );
+        assert_eq!(
+            serde_json::to_value(&watched).unwrap(),
+            json!({ "on_off": { "features": { "read_only": true }, "state": { "on": true } } })
+        );
+    }
+
+    #[test]
+    fn robot_vacuum_commands_need_their_feature() {
+        let caps = |features: RobotVacuumFeatures| Capabilities {
+            robot_vacuum: Some(RobotVacuumCapability {
+                features,
+                state: None,
+            }),
+            ..Capabilities::default()
+        };
+        let all = [
+            RobotVacuumCommand::Start,
+            RobotVacuumCommand::Pause,
+            RobotVacuumCommand::ReturnToDock,
+        ];
+        let everything = RobotVacuumFeatures {
+            start: true,
+            pause: true,
+            return_to_dock: true,
+        };
+        assert!(
+            all.iter()
+                .all(|cmd| caps(everything).supports(&Command::RobotVacuum(*cmd)))
+        );
+        let no_pause = RobotVacuumFeatures {
+            pause: false,
+            ..everything
+        };
+        assert!(!caps(no_pause).supports(&Command::RobotVacuum(RobotVacuumCommand::Pause)));
+        assert!(caps(no_pause).supports(&Command::RobotVacuum(RobotVacuumCommand::Start)));
+        let watched = RobotVacuumFeatures {
+            start: false,
+            pause: false,
+            return_to_dock: false,
+        };
+        assert!(
+            all.iter()
+                .all(|cmd| !caps(watched).supports(&Command::RobotVacuum(*cmd)))
+        );
+        assert!(
+            !Capabilities::default().supports(&Command::RobotVacuum(RobotVacuumCommand::Start))
+        );
+
+        let mut with_state = caps(everything);
+        assert!(
+            with_state.apply_state(
+                RobotVacuumState {
+                    status: RobotVacuumStatus::Charging,
+                    cleaned_area_m2: Some(12.0),
+                    cleaning_duration_s: None,
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            serde_json::to_value(&with_state).unwrap(),
+            json!({ "robot_vacuum": {
+                "features": { "start": true, "pause": true, "return_to_dock": true },
+                "state": { "status": "charging", "cleaned_area_m2": 12.0 }
+            } })
+        );
     }
 }

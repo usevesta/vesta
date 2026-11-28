@@ -283,10 +283,8 @@ fn round_to(value: f64, per_unit: f64) -> f64 {
 
 fn meter(power_w: f64, limit_w: Option<f64>) -> PowerMeterState {
     PowerMeterState {
-        power_w: power_w.round(),
-        energy_wh: None,
-        energy_exported_wh: None,
         limit_w,
+        ..PowerMeterState::power(power_w.round())
     }
 }
 

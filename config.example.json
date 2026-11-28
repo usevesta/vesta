@@ -40,25 +40,45 @@
       }
     },
     {
-      "id": "living_room_light",
-      "name": "Living Room Light",
+      "id": "hall_lamp",
+      "name": "Hall Lamp",
+      "room": "hall",
       "driver": "tuya",
       "config": {
-        "host": "192.168.1.60",
-        "device_id": "bf1234567890abcdef",
-        "local_key": "CHANGE_ME_16_CHAR",
-        "protocol_version": "3.4"
+        "device_id": "bf00000000000000000000",
+        "local_key": "0123456789abcdef",
+        "protocol_version": "3.5",
+        "host": "192.0.2.20",
+        "category": "cz",
+        "mapping": {
+          "1": { "code": "switch_1", "type": "Boolean", "values": {} },
+          "20": { "code": "add_ele", "type": "Integer", "values": { "unit": "kW·h", "min": 0, "max": 50000, "scale": 3, "step": 100 } },
+          "21": { "code": "cur_current", "type": "Integer", "values": { "unit": "mA", "min": 0, "max": 30000, "scale": 0, "step": 1 } },
+          "22": { "code": "cur_power", "type": "Integer", "values": { "unit": "W", "min": 0, "max": 50000, "scale": 1, "step": 1 } },
+          "23": { "code": "cur_voltage", "type": "Integer", "values": { "unit": "V", "min": 0, "max": 5000, "scale": 1, "step": 1 } }
+        },
+        "read_only": false
       }
     },
     {
-      "id": "living_room_fan",
-      "name": "Living Room Fan",
+      "id": "robot_vacuum",
+      "name": "Robot Vacuum",
       "driver": "tuya",
       "config": {
-        "host": "192.168.1.61",
-        "device_id": "bf0987654321fedcba",
-        "local_key": "CHANGE_ME_16_CHAR",
-        "protocol_version": "3.3"
+        "device_id": "bf00000000000000000001",
+        "local_key": "fedcba9876543210",
+        "protocol_version": "3.5",
+        "category": "sd",
+        "mapping": {
+          "1": { "code": "power_go", "type": "Boolean", "values": {} },
+          "2": { "code": "pause", "type": "Boolean", "values": {} },
+          "3": { "code": "switch_charge", "type": "Boolean", "values": {} },
+          "5": { "code": "status", "type": "Enum", "values": { "range": ["standby", "cleaning", "paused", "goto_charge", "charging", "charge_done", "sleep"] } },
+          "16": { "code": "clean_time", "type": "Integer", "values": { "unit": "min", "min": 0, "max": 9999, "scale": 0, "step": 1 } },
+          "17": { "code": "clean_area", "type": "Integer", "values": { "unit": "m²", "min": 0, "max": 9999, "scale": 0, "step": 1 } },
+          "23": { "code": "electricity_left", "type": "Integer", "values": { "unit": "%", "min": 0, "max": 100, "scale": 0, "step": 1 } }
+        },
+        "read_only": true
       }
     },
     {

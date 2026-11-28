@@ -14,6 +14,7 @@ import type { LockCapability } from "./LockCapability";
 import type { OccupancyCapability } from "./OccupancyCapability";
 import type { OnOffCapability } from "./OnOffCapability";
 import type { PowerMeterCapability } from "./PowerMeterCapability";
+import type { RobotVacuumCapability } from "./RobotVacuumCapability";
 import type { TemperatureCapability } from "./TemperatureCapability";
 import type { TriggerCapability } from "./TriggerCapability";
 
@@ -21,4 +22,4 @@ import type { TriggerCapability } from "./TriggerCapability";
  * The capabilities of one endpoint, keyed by capability name. Reported by
  * the driver; users can never add or remove capabilities.
  */
-export type Capabilities = { on_off?: OnOffCapability, level?: LevelCapability, color_temperature?: ColorTemperatureCapability, color?: ColorCapability, cover?: CoverCapability, fan?: FanCapability, lock?: LockCapability, trigger?: TriggerCapability, camera?: CameraCapability, doorbell?: DoorbellCapability, occupancy?: OccupancyCapability, contact?: ContactCapability, temperature?: TemperatureCapability, humidity?: HumidityCapability, power_meter?: PowerMeterCapability, ev_charger?: EvChargerCapability, battery?: BatteryCapability, };
+export type Capabilities = { on_off?: OnOffCapability, level?: LevelCapability, color_temperature?: ColorTemperatureCapability, color?: ColorCapability, cover?: CoverCapability, fan?: FanCapability, lock?: LockCapability, trigger?: TriggerCapability, camera?: CameraCapability, doorbell?: DoorbellCapability, occupancy?: OccupancyCapability, contact?: ContactCapability, temperature?: TemperatureCapability, humidity?: HumidityCapability, power_meter?: PowerMeterCapability, ev_charger?: EvChargerCapability, battery?: BatteryCapability, robot_vacuum?: RobotVacuumCapability, };

@@ -7,9 +7,10 @@ import type { FanCommand } from "./FanCommand";
 import type { LevelCommand } from "./LevelCommand";
 import type { LockCommand } from "./LockCommand";
 import type { OnOffCommand } from "./OnOffCommand";
+import type { RobotVacuumCommand } from "./RobotVacuumCommand";
 import type { TriggerCommand } from "./TriggerCommand";
 
 /**
  * A command for one capability of one endpoint.
  */
-export type Command = { "capability": "on_off" } & OnOffCommand | { "capability": "level" } & LevelCommand | { "capability": "color_temperature" } & ColorTemperatureCommand | { "capability": "color" } & ColorCommand | { "capability": "cover" } & CoverCommand | { "capability": "fan" } & FanCommand | { "capability": "lock" } & LockCommand | { "capability": "trigger" } & TriggerCommand | { "capability": "ev_charger" } & EvChargerCommand;
+export type Command = { "capability": "on_off" } & OnOffCommand | { "capability": "level" } & LevelCommand | { "capability": "color_temperature" } & ColorTemperatureCommand | { "capability": "color" } & ColorCommand | { "capability": "cover" } & CoverCommand | { "capability": "fan" } & FanCommand | { "capability": "lock" } & LockCommand | { "capability": "trigger" } & TriggerCommand | { "capability": "ev_charger" } & EvChargerCommand | { "capability": "robot_vacuum" } & RobotVacuumCommand;

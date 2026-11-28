@@ -5,4 +5,4 @@
  * opening it is sensitive. Capabilities decide the controls. Drivers report
  * a default; users may override it ("this relay is a light").
  */
-export type EndpointType = "light" | "outlet" | "switch" | "fan" | "window_covering" | "garage_door" | "gate" | "door" | "lock" | "camera" | "doorbell" | "sensor" | "meter" | "ev_charger";
+export type EndpointType = "light" | "outlet" | "switch" | "fan" | "window_covering" | "garage_door" | "gate" | "door" | "lock" | "camera" | "doorbell" | "sensor" | "meter" | "ev_charger" | "robot_vacuum";

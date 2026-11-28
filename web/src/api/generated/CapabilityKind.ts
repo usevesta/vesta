@@ -3,4 +3,4 @@
 /**
  * Name of a capability, as used for the keys of [`Capabilities`].
  */
-export type CapabilityKind = "on_off" | "level" | "color_temperature" | "color" | "cover" | "fan" | "lock" | "trigger" | "camera" | "doorbell" | "occupancy" | "contact" | "temperature" | "humidity" | "power_meter" | "ev_charger" | "battery";
+export type CapabilityKind = "on_off" | "level" | "color_temperature" | "color" | "cover" | "fan" | "lock" | "trigger" | "camera" | "doorbell" | "occupancy" | "contact" | "temperature" | "humidity" | "power_meter" | "ev_charger" | "battery" | "robot_vacuum";

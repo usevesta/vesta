@@ -35,14 +35,15 @@ pub use capability::{
     EvChargeMode, EvChargerCapability, EvChargerFeatures, EvChargerState, EvChargerStatus,
     EvChargerWaitReason, FanCapability, FanDirection, FanFeatures, FanState, HumidityCapability,
     HumidityState, LevelCapability, LevelState, LockCapability, LockFeatures, LockState,
-    LockStatus, MeterRole, OccupancyCapability, OccupancyState, OnOffCapability, OnOffState,
-    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, TemperatureCapability,
+    LockStatus, MeterRole, OccupancyCapability, OccupancyState, OnOffCapability, OnOffFeatures,
+    OnOffState, PowerMeterCapability, PowerMeterFeatures, PowerMeterState, RobotVacuumCapability,
+    RobotVacuumFeatures, RobotVacuumState, RobotVacuumStatus, TemperatureCapability,
     TemperatureState, TriggerCapability,
 };
 pub use command::{
     ColorCommand, ColorTemperatureCommand, Command, CommandError, CommandRequest, CommandResult,
     CoverCommand, EvChargerCommand, FanCommand, LevelCommand, LockCommand, OnOffCommand,
-    RejectReason, TriggerCommand,
+    RejectReason, RobotVacuumCommand, TriggerCommand,
 };
 pub use config::{
     CONFIG_SCHEMA_VERSION, ConfigError, DeviceConfig, EndpointOverride, Go2rtcSettings, HubConfig,

@@ -141,6 +141,18 @@ fn every_command_has_the_documented_shape() {
             Command::EvCharger(EvChargerCommand::SetSchedule { enabled: true }),
             json!({ "capability": "ev_charger", "action": "set_schedule", "enabled": true }),
         ),
+        (
+            Command::RobotVacuum(RobotVacuumCommand::Start),
+            json!({ "capability": "robot_vacuum", "action": "start" }),
+        ),
+        (
+            Command::RobotVacuum(RobotVacuumCommand::Pause),
+            json!({ "capability": "robot_vacuum", "action": "pause" }),
+        ),
+        (
+            Command::RobotVacuum(RobotVacuumCommand::ReturnToDock),
+            json!({ "capability": "robot_vacuum", "action": "return_to_dock" }),
+        ),
     ];
     for (command, expected) in cases {
         assert_eq!(
@@ -331,23 +343,30 @@ fn every_capability_state_has_the_documented_shape() {
         ),
         (
             PowerMeterState {
-                power_w: -1250.0,
                 energy_wh: Some(1_000_000.0),
                 energy_exported_wh: Some(250_000.0),
-                limit_w: None,
+                ..PowerMeterState::power(-1250.0)
             }
             .into(),
             json!({ "power_w": -1250.0, "energy_wh": 1_000_000.0, "energy_exported_wh": 250_000.0 }),
         ),
         (
             PowerMeterState {
-                power_w: 5517.8,
-                energy_wh: None,
-                energy_exported_wh: None,
                 limit_w: Some(5700.0),
+                ..PowerMeterState::power(5517.8)
             }
             .into(),
             json!({ "power_w": 5517.8, "limit_w": 5700.0 }),
+        ),
+        (
+            PowerMeterState {
+                energy_wh: Some(1234.0),
+                voltage_v: Some(227.2),
+                current_a: Some(0.112),
+                ..PowerMeterState::power(12.5)
+            }
+            .into(),
+            json!({ "power_w": 12.5, "energy_wh": 1234.0, "voltage_v": 227.2, "current_a": 0.112 }),
         ),
         (
             EvChargerState {
@@ -415,6 +434,24 @@ fn every_capability_state_has_the_documented_shape() {
             .into(),
             json!({ "percent": 15, "low": true }),
         ),
+        (
+            RobotVacuumState {
+                status: RobotVacuumStatus::Returning,
+                cleaned_area_m2: None,
+                cleaning_duration_s: None,
+            }
+            .into(),
+            json!({ "status": "returning" }),
+        ),
+        (
+            RobotVacuumState {
+                status: RobotVacuumStatus::Cleaning,
+                cleaned_area_m2: Some(14.0),
+                cleaning_duration_s: Some(1_500),
+            }
+            .into(),
+            json!({ "status": "cleaning", "cleaned_area_m2": 14.0, "cleaning_duration_s": 1500 }),
+        ),
     ];
 
     for (state, expected_state) in cases {
@@ -438,6 +475,7 @@ fn every_capability_state_has_the_documented_shape() {
 fn full_catalog_endpoint_round_trips() {
     let capabilities = Capabilities {
         on_off: Some(OnOffCapability {
+            features: Some(OnOffFeatures { read_only: true }),
             state: Some(OnOffState { on: true }),
         }),
         level: Some(LevelCapability {
@@ -503,6 +541,14 @@ fn full_catalog_endpoint_round_trips() {
             state: None,
         }),
         battery: Some(BatteryCapability::default()),
+        robot_vacuum: Some(RobotVacuumCapability {
+            features: RobotVacuumFeatures {
+                start: true,
+                pause: false,
+                return_to_dock: true,
+            },
+            state: None,
+        }),
     };
     assert_eq!(capabilities.kinds(), CapabilityKind::ALL.to_vec());
 

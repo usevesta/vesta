@@ -323,9 +323,7 @@ fn plain(endpoint: Endpoint) -> SimEndpoint {
 }
 
 fn on_off(on: bool) -> Option<OnOffCapability> {
-    Some(OnOffCapability {
-        state: Some(OnOffState { on }),
-    })
+    Some(OnOffCapability::with_state(on))
 }
 
 fn level(value: u8) -> Option<LevelCapability> {
@@ -648,7 +646,9 @@ impl SimDriver {
             Command::Trigger(TriggerCommand::Fire) => {
                 tracing::info!(endpoint = %endpoint, "simulated trigger fired");
             }
-            Command::Lock(_) | Command::EvCharger(_) => return Err(DriverError::Unsupported),
+            Command::Lock(_) | Command::EvCharger(_) | Command::RobotVacuum(_) => {
+                return Err(DriverError::Unsupported);
+            }
         }
         Ok(changed
             .into_iter()

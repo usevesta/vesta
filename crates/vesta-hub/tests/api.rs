@@ -563,9 +563,7 @@ fn switch_endpoint() -> Endpoint {
         endpoint_type: EndpointType::Switch,
         room: None,
         capabilities: Capabilities {
-            on_off: Some(OnOffCapability {
-                state: Some(OnOffState { on: false }),
-            }),
+            on_off: Some(OnOffCapability::with_state(false)),
             ..Capabilities::default()
         },
     }

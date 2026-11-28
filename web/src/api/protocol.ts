@@ -72,6 +72,7 @@ const CAPABILITY_FEATURES: Readonly<Record<CapabilityKind, boolean>> = {
   power_meter: true,
   ev_charger: true,
   battery: false,
+  robot_vacuum: true,
 }
 
 /** Capabilities that have a state (and so appear in `state` messages). */
@@ -91,6 +92,7 @@ const STATEFUL_CAPABILITIES: Readonly<Record<StateChange['capability'], true>> =
   power_meter: true,
   ev_charger: true,
   battery: true,
+  robot_vacuum: true,
 }
 
 const EVENT_KINDS: Readonly<Record<EventKind, true>> = {
@@ -113,6 +115,7 @@ const ENDPOINT_TYPES: Readonly<Record<EndpointType, true>> = {
   sensor: true,
   meter: true,
   ev_charger: true,
+  robot_vacuum: true,
 }
 
 const ERROR_CODES: Readonly<Record<CommandError['code'], true>> = {

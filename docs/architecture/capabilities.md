@@ -138,6 +138,57 @@ function. The grid meter carries the contracted power as `limit_w`.
 }
 ```
 
+### Example: a plug that is only watched, and a robot vacuum
+
+A plug set up for monitoring only (`read_only` in its driver config) says so in its `on_off`
+features: the UI shows whether it is on, without a switch. Its meter is a `load`. A robot vacuum
+reports its charge as a `battery` capability on the same endpoint.
+
+```json
+{
+  "id": "hall_plug",
+  "name": "Hall lamp",
+  "room": "hall",
+  "online": true,
+  "endpoints": [
+    {
+      "id": "main",
+      "name": "Hall lamp",
+      "type": "outlet",
+      "capabilities": {
+        "on_off": { "features": { "read_only": true }, "state": { "on": true } },
+        "power_meter": {
+          "features": { "role": "load", "bidirectional": false },
+          "state": { "power_w": 12.5, "voltage_v": 227.2, "current_a": 0.112 }
+        }
+      }
+    }
+  ]
+}
+```
+
+```json
+{
+  "id": "robot_vacuum",
+  "name": "Robot vacuum",
+  "online": true,
+  "endpoints": [
+    {
+      "id": "main",
+      "name": "Robot vacuum",
+      "type": "robot_vacuum",
+      "capabilities": {
+        "battery": { "state": { "percent": 100, "low": false } },
+        "robot_vacuum": {
+          "features": { "start": true, "pause": true, "return_to_dock": true },
+          "state": { "status": "docked", "cleaned_area_m2": 22.0, "cleaning_duration_s": 1800 }
+        }
+      }
+    }
+  ]
+}
+```
+
 ## Endpoint Types
 The type decides the icon, the default widget and whether opening commands are sensitive. Capabilities decide the controls. Drivers report a default type; users may override it from the UI (e.g. "this relay is a light").
 
@@ -157,12 +208,13 @@ The type decides the icon, the default widget and whether opening commands are s
 | `sensor` | `occupancy`, `contact`, `temperature`, `humidity`, `battery` | no |
 | `meter` | `power_meter` | no |
 | `ev_charger` | `ev_charger` (its meters are sibling `meter` endpoints, see below) | no (but `ev_charger.unlock` is sensitive) |
+| `robot_vacuum` | `robot_vacuum`, `battery` | no |
 
 ## Capability Catalog
 
 | Capability | Features | State | Commands | Events | Phase |
 |---|---|---|---|---|---|
-| `on_off` | — | `on: bool` | `on`, `off`, `toggle` | — | v1 |
+| `on_off` | `read_only: bool` (optional; omitted = switchable) | `on: bool` | `on`, `off`, `toggle` | — | v1 |
 | `level` | — | `level: 0–100` (%) | `set { level, transition_ms? }` | — | v1 |
 | `color_temperature` | `min_kelvin`, `max_kelvin` | `kelvin` | `set { kelvin, transition_ms? }` | — | v1 |
 | `color` | — | `hue: 0–360`, `saturation: 0–100` | `set { hue, saturation, transition_ms? }` | — | v1 |
@@ -176,9 +228,10 @@ The type decides the icon, the default widget and whether opening commands are s
 | `contact` | — | `open: bool` | — | — | v2 |
 | `temperature` | — | `celsius` | — | — | v2 |
 | `humidity` | — | `percent: 0–100` | — | — | v2 |
-| `power_meter` | `role` (`grid`, `solar`, `load`, `ev`, `house`, `battery`), `bidirectional: bool` | `power_w`, `energy_wh?`, `energy_exported_wh?`, `limit_w?` | — | — | v2 |
+| `power_meter` | `role` (`grid`, `solar`, `load`, `ev`, `house`, `battery`), `bidirectional: bool` | `power_w`, `energy_wh?`, `energy_exported_wh?`, `limit_w?`, `voltage_v?`, `current_a?` | — | — | v2 |
 | `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }` | — | v2 |
 | `battery` | — | `percent: 0–100`, `low: bool` | — | — | v2 |
+| `robot_vacuum` | `start`, `pause`, `return_to_dock` (bools) | `status: docked \| charging \| cleaning \| paused \| returning \| idle \| error`, `cleaned_area_m2?`, `cleaning_duration_s?` | `start`, `pause`, `return_to_dock` | — | v2 |
 
 Notes:
 - `on_off` + `level`: `level.set` on an endpoint that is off turns it on (like Matter's *MoveToLevelWithOnOff*). Dragging a slider must light the lamp.
@@ -193,6 +246,20 @@ Notes:
 - A charger and the meters it reads (grid, house, solar, battery) are **endpoints of one device**: a charger widget finds its meters among its sibling endpoints by `role`.
 - `power_meter.limit_w` is the most power the connection may draw (the contracted power on a `grid` meter). It is informative only: VESTA never enforces it; the devices that do keep doing it.
 - `power_meter.energy_wh` is omitted when the device only measures power (no invented counters).
+  A counter that resets (e.g. "energy since the device last reported to its cloud") is not a
+  lifetime counter and is not reported as one.
+- `power_meter.voltage_v` and `current_a` are what the meter measures right now, when it does.
+- `on_off.features.read_only: true` means VESTA only watches the switch (the device is set up for
+  monitoring only): the Hub answers `unsupported` to `on`, `off` and `toggle`, and the UI shows the
+  state without a switch. Without `features` (the usual case) it can be switched.
+- `robot_vacuum` (Matter: RVC Operational State and RVC Run Mode): `start` starts cleaning, or
+  carries on after a pause; `pause`; `return_to_dock` sends it back to charge. Each needs its
+  feature; a robot set up for monitoring only reports them all `false`. `status`: `docked` (on
+  the dock, charged), `charging`, `cleaning` (also on its way to clean a spot), `paused`,
+  `returning` (to the dock), `idle` (off the dock and not cleaning, e.g. standing by or asleep),
+  `error` (stuck or needs attention). Unknown device states are not mapped to any status (the
+  state stays unknown). `cleaned_area_m2` and `cleaning_duration_s` describe the current or last
+  cleaning. Its charge is a `battery` capability on the same endpoint; `low` is at 20 % or less.
 
 ## Units & Conventions
 - Percent: integers `0–100`. Color temperature: Kelvin (not mireds). Hue: degrees `0–360`. Power: W. Energy: Wh. Temperature: °C. Durations: ms. Current: A.
@@ -307,6 +374,7 @@ pub enum Command {
     Lock(LockCommand),                 // Lock, Unlock, Unlatch
     Trigger(TriggerCommand),           // Fire
     EvCharger(EvChargerCommand),       // Pause, Resume, SetCurrent { amps }, SetMode { mode }
+    RobotVacuum(RobotVacuumCommand),   // Start, Pause, ReturnToDock
 }
 ```
 
@@ -344,6 +412,8 @@ Drivers return `DriverError::Unsupported` for commands they cannot execute. Rout
 | `power_meter` | ElectricalPowerMeasurement, ElectricalEnergyMeasurement |
 | `ev_charger` | EnergyEVSE (`State`, `SupplyState`, `SessionDuration`, `SessionEnergyCharged`, `MinimumChargeCurrent` / `MaximumChargeCurrent`, `CircuitCapacity` for the hardware maximum; `pause`/`resume` ↔ `Disable` / `EnableCharging`), EnergyEVSEMode for `mode` (Manual, TimeOfUse, SolarCharging), ElectricalPowerMeasurement for power and per-phase current; `lock` has no EVSE equivalent |
 | `battery` | PowerSource |
+| `robot_vacuum` | RVC Operational State (`docked` ↔ Docked, `charging` ↔ Charging, `cleaning` ↔ Running, `paused` ↔ Paused, `returning` ↔ SeekingCharger, `idle` ↔ Stopped, `error` ↔ Error; `start`/`pause`/`return_to_dock` ↔ Resume / Pause / GoHome), RVC Run Mode (Idle, Cleaning) |
+| `on_off.features.read_only` | no Matter equivalent (a bridge exposes such an endpoint without the OnOff commands) |
 | `trigger`, `camera`, `doorbell` | to be decided (depends on Matter version support) |
 
 ## Versioning

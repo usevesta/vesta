@@ -8,8 +8,14 @@
   "kiosk": {
     "screensaver_timeout_sec": 120,
     "wake_on": [
-      { "target": "front_doorbell/main", "event": "doorbell.pressed" },
-      { "target": "front_doorbell/main", "event": "occupancy.detected" }
+      {
+        "target": "front_doorbell/main",
+        "event": "doorbell.pressed"
+      },
+      {
+        "target": "front_doorbell/main",
+        "event": "occupancy.detected"
+      }
     ]
   },
   "doorbell_overlay": {
@@ -49,28 +55,19 @@
           }
         },
         {
-          "type": "light-control",
-          "target": "living_room_light/main",
+          "type": "outlet-control",
+          "target": "hall_lamp/main",
           "col_span": 2,
           "row_span": 1,
           "props": {
-            "label": "Living Room"
+            "label": "Hall Lamp"
           }
         },
         {
-          "type": "fan-control",
-          "target": "living_room_fan/fan",
-          "col_span": 1,
+          "type": "robot-vacuum",
+          "target": "robot_vacuum/main",
+          "col_span": 2,
           "row_span": 1
-        },
-        {
-          "type": "light-control",
-          "target": "living_room_fan/light",
-          "col_span": 1,
-          "row_span": 1,
-          "props": {
-            "label": "Fan Light"
-          }
         }
       ]
     }

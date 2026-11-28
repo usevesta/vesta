@@ -12,4 +12,12 @@ energy_wh?: number, energy_exported_wh?: number,
  * devices that do (an EV charger's own power control, the utility's
  * meter) keep doing it (AGENTS.md rule 7).
  */
-limit_w?: number, };
+limit_w?: number, 
+/**
+ * Measured voltage, in V, when the meter reports it.
+ */
+voltage_v?: number, 
+/**
+ * Measured current, in A, when the meter reports it.
+ */
+current_a?: number, };

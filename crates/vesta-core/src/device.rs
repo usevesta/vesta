@@ -27,6 +27,7 @@ pub enum EndpointType {
     Sensor,
     Meter,
     EvCharger,
+    RobotVacuum,
 }
 
 impl EndpointType {
