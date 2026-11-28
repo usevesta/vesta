@@ -141,3 +141,70 @@ export class FakeSockets {
 }
 
 export const NO_WAKE_SIGNALS = { subscribe: () => () => undefined }
+
+/**
+ * A car charger like the simulated one: the charger plus the home's grid,
+ * house and solar meters, all endpoints of one device.
+ */
+export function chargerDevice(overrides: { online?: boolean } = {}): Device {
+  return {
+    id: 'car_charger',
+    name: 'Car Charger',
+    room: 'garage',
+    online: overrides.online ?? true,
+    endpoints: [
+      {
+        id: 'charger',
+        name: 'Car Charger',
+        type: 'ev_charger',
+        capabilities: {
+          ev_charger: {
+            features: {
+              min_current_a: 6,
+              max_current_a: 32,
+              modes: ['manual', 'solar', 'solar_grid'],
+              pause: true,
+              adjustable_current: true,
+              lock: true,
+              schedule: true,
+            },
+            state: {
+              status: 'charging',
+              power_w: 5_092,
+              session_energy_wh: 4_890,
+              session_duration_s: 3_841,
+              current_a: 23,
+              auto_current: false,
+              phase_current_a: [22.94, 0, 0],
+              min_current_a: 6,
+              max_current_a: 30,
+              mode: 'manual',
+              locked: false,
+              schedule_enabled: true,
+            },
+          },
+        },
+      },
+      {
+        id: 'grid',
+        name: 'Grid',
+        type: 'meter',
+        capabilities: {
+          power_meter: { features: { role: 'grid', bidirectional: true }, state: { power_w: 5_300, limit_w: 5_750 } },
+        },
+      },
+      {
+        id: 'house',
+        name: 'House',
+        type: 'meter',
+        capabilities: { power_meter: { features: { role: 'house', bidirectional: false }, state: { power_w: 6_100 } } },
+      },
+      {
+        id: 'solar',
+        name: 'Solar panels',
+        type: 'meter',
+        capabilities: { power_meter: { features: { role: 'solar', bidirectional: false }, state: { power_w: 800 } } },
+      },
+    ],
+  }
+}

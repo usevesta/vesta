@@ -11,6 +11,7 @@ import { isIconName, type IconName } from '@/lib/icons'
 import type { EndpointView } from '@/live/device-store'
 import type { CommandOutcome, SendCommandOptions } from '@/live/live-client'
 import { guardsAccess, openCommand } from '@/live/sensitive'
+import { chargerCurrentRange, type EnergyReadings } from '@/widgets/ev-charger/energy'
 import { isWidgetType, type AnyWidgetSpec, type WidgetSpec, type WidgetType } from '@/widgets/registry'
 
 export interface BindingContext {
@@ -39,7 +40,46 @@ function labelFor(widget: Widget, view: EndpointView | undefined, ctx: BindingCo
   return stringProp(widget, 'label') ?? view?.endpoint.name ?? ctx.fallbackLabel
 }
 
-function bindKnown(type: WidgetType, widget: Widget, view: EndpointView | undefined, ctx: BindingContext): WidgetSpec {
+/**
+ * The home's meters next to a charger (endpoints of the same device), by
+ * role. A meter without a reading yet is left out.
+ */
+export function meterReadings(related: readonly EndpointView[]): EnergyReadings {
+  const readings: { -readonly [K in keyof EnergyReadings]: EnergyReadings[K] } = {}
+  for (const other of related) {
+    const meter = other.endpoint.capabilities.power_meter
+    const state = meter?.state
+    if (meter === undefined || state === undefined) continue
+    switch (meter.features.role) {
+      case 'grid':
+        readings.gridW = state.power_w
+        if (state.limit_w !== undefined) readings.limitW = state.limit_w
+        break
+      case 'house':
+        readings.houseW = state.power_w
+        break
+      case 'solar':
+        readings.solarW = state.power_w
+        break
+      case 'battery':
+        readings.batteryW = state.power_w
+        break
+      case 'load':
+      case 'ev':
+        // Single circuits are not part of the home's balance.
+        break
+    }
+  }
+  return readings
+}
+
+function bindKnown(
+  type: WidgetType,
+  widget: Widget,
+  view: EndpointView | undefined,
+  ctx: BindingContext,
+  related: readonly EndpointView[],
+): WidgetSpec {
   const label = labelFor(widget, view, ctx)
   const capabilities = view?.endpoint.capabilities
   const status = { pending: view?.pending ?? false, unavailable: view?.available !== true }
@@ -192,14 +232,94 @@ function bindKnown(type: WidgetType, widget: Widget, view: EndpointView | undefi
         },
       }
 
+    case 'ev-charger': {
+      const charger = capabilities?.ev_charger
+      const state = charger?.state
+      const features = charger?.features
+      const send = (command: Command, confirmed = false) => {
+        run(command, confirmed)
+      }
+      const modes = features?.modes ?? []
+      return {
+        type,
+        props: {
+          ...status,
+          unavailable: status.unavailable || charger === undefined,
+          label,
+          icon: iconFor(widget, view, 'ev_charger'),
+          rows: widget.row_span,
+          status: state?.status,
+          waitingFor: state?.waiting_for,
+          powerW: state?.power_w,
+          sessionEnergyWh: state?.session_energy_wh,
+          sessionDurationS: state?.session_duration_s,
+          currentA: state?.current_a,
+          measuredA: state?.phase_current_a,
+          currentRange: features === undefined ? undefined : chargerCurrentRange(features, state),
+          autoCurrent: state?.auto_current,
+          mode: state?.mode,
+          modes,
+          locked: state?.locked,
+          scheduleEnabled: state?.schedule_enabled,
+          readings: meterReadings(related),
+          onPause:
+            features?.pause === true
+              ? () => {
+                  send({ capability: 'ev_charger', action: 'pause' })
+                }
+              : undefined,
+          onResume:
+            features?.pause === true
+              ? () => {
+                  send({ capability: 'ev_charger', action: 'resume' })
+                }
+              : undefined,
+          onCurrentChange:
+            features?.adjustable_current === true
+              ? (amps) => {
+                  send({ capability: 'ev_charger', action: 'set_current', amps })
+                }
+              : undefined,
+          onModeChange:
+            modes.length > 0
+              ? (mode) => {
+                  send({ capability: 'ev_charger', action: 'set_mode', mode })
+                }
+              : undefined,
+          // The widget asks before unlocking; only then is it sent as confirmed.
+          onLockChange:
+            features?.lock === true
+              ? (locked) => {
+                  send({ capability: 'ev_charger', action: locked ? 'lock' : 'unlock' }, !locked)
+                }
+              : undefined,
+          onScheduleChange:
+            features?.schedule === true
+              ? (enabled) => {
+                  send({ capability: 'ev_charger', action: 'set_schedule', enabled })
+                }
+              : undefined,
+        },
+      }
+    }
+
     case 'clock-weather':
       // Shows no place name unless the dashboard gives one.
       return { type, props: { label: stringProp(widget, 'label') } }
   }
 }
 
-/** Build the registry spec for one dashboard widget. Unknown types keep their type. */
-export function bindWidget(widget: Widget, view: EndpointView | undefined, ctx: BindingContext): WidgetSpec | AnyWidgetSpec {
+/**
+ * Build the registry spec for one dashboard widget. Unknown types keep
+ * their type. `related` are the other endpoints of the same device (a
+ * charger's meters).
+ */
+export function bindWidget(
+  widget: Widget,
+  view: EndpointView | undefined,
+  ctx: BindingContext,
+  related: readonly EndpointView[] = [],
+): WidgetSpec | AnyWidgetSpec {
   if (!isWidgetType(widget.type)) return { type: widget.type, props: widget.props }
-  return bindKnown(widget.type, widget, view, ctx)
+  return bindKnown(widget.type, widget, view, ctx, related)
 }

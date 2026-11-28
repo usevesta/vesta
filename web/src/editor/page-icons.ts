@@ -14,6 +14,7 @@ export const PAGE_ICONS = [
   'door',
   'camera',
   'fan',
+  'ev_charger',
 ] as const satisfies readonly IconName[]
 
 export type PageIcon = (typeof PAGE_ICONS)[number]

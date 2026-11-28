@@ -18,6 +18,7 @@ export type DemoThing =
   | { readonly kind: 'cover'; readonly id: DemoCoverId; readonly icon: IconName; readonly sensitive: boolean }
   | { readonly kind: 'door'; readonly id: DemoDoorId }
   | { readonly kind: 'camera'; readonly unavailable: boolean }
+  | { readonly kind: 'ev' }
 
 type DemoName = keyof ReturnType<typeof demoNames>
 type DemoRoom = keyof ReturnType<typeof demoRooms>
@@ -47,6 +48,7 @@ function demoNames(t: TFunction) {
     frontDoor: t('demo.devices.frontDoor'),
     frontDoorCamera: t('demo.devices.frontDoorCamera'),
     gardenCamera: t('demo.devices.gardenCamera'),
+    carCharger: t('demo.devices.carCharger'),
   }
 }
 
@@ -155,6 +157,14 @@ export const DEMO_ENTRIES: readonly DemoEntry[] = [
     capabilities: ['cover'],
   },
   {
+    target: 'car_charger/charger',
+    thing: { kind: 'ev' },
+    name: 'carCharger',
+    room: 'garage',
+    type: 'ev_charger',
+    capabilities: ['ev_charger'],
+  },
+  {
     target: 'garden_camera/main',
     thing: { kind: 'camera', unavailable: true },
     name: 'gardenCamera',
@@ -209,7 +219,15 @@ export function demoDashboard(t: TFunction): Dashboard {
           tile('camera-preview', 'front_door_camera/main', 2, 2),
           tile('light-control', 'living_room_light/main', 2, 1),
           tile('cover-control', 'garage_door/main', 2, 1),
+          tile('ev-charger', 'car_charger/charger', 2, 1),
         ],
+      },
+      {
+        id: 'energy',
+        title: t('demo.pages.energy'),
+        icon: 'ev_charger',
+        grid_columns: 4,
+        widgets: [tile('ev-charger', 'car_charger/charger', 4, 1)],
       },
       {
         id: 'living_room',

@@ -236,3 +236,38 @@ export function useEndpointView(target: Target | undefined): EndpointView | unde
     [target, endpoint, device, pending, synced],
   )
 }
+
+const NO_VIEWS: readonly EndpointView[] = Object.freeze([])
+
+/**
+ * The other endpoints of `target`'s device, e.g. the meters next to a
+ * charger. Empty while unknown.
+ */
+export function selectRelatedEndpointViews(data: DeviceData, target: Target): readonly EndpointView[] {
+  const deviceId = parseTarget(target)?.deviceId
+  if (deviceId === undefined) return NO_VIEWS
+  const prefix = `${deviceId}/`
+  const views: EndpointView[] = []
+  for (const other of Object.keys(data.endpoints)) {
+    if (other === target || !other.startsWith(prefix)) continue
+    const view = selectEndpointView(data, other)
+    if (view !== undefined) views.push(view)
+  }
+  return views.length === 0 ? NO_VIEWS : views
+}
+
+/**
+ * Live views of the other endpoints of `target`'s device. Without a
+ * target it subscribes to nothing, so other tiles never re-render for it.
+ */
+export function useRelatedEndpointViews(target: Target | undefined): readonly EndpointView[] {
+  const none = target === undefined
+  const endpoints = useDeviceStore((s) => (none ? EMPTY_DEVICE_DATA.endpoints : s.endpoints))
+  const devices = useDeviceStore((s) => (none ? EMPTY_DEVICE_DATA.devices : s.devices))
+  const pending = useDeviceStore((s) => (none ? EMPTY_DEVICE_DATA.pending : s.pending))
+  const synced = useDeviceStore((s) => s.synced)
+  return useMemo(
+    () => (target === undefined ? NO_VIEWS : selectRelatedEndpointViews({ endpoints, devices, pending, synced }, target)),
+    [target, endpoints, devices, pending, synced],
+  )
+}
