@@ -5,8 +5,9 @@ crate in VESTA that knows the brand: the Hub and the wall panel see an `ev_charg
 `power_meter` endpoints (see `docs/architecture/capabilities.md`).
 
 Everything runs on the local network, with one optional exception: with a `cloud_api_key`, the
-household can change the charger's **charging hours** from the panel, and those are stored in the
-charger through V2C's cloud, only at the moment someone saves them (see
+household can see and change the charger's **charging hours** from the panel. They are stored in
+the charger through V2C's cloud at the moment someone saves them, and read from it when someone
+opens the hours editor (at most once per 30 s); never on a timer (see
 [Charging hours](#charging-hours)).
 
 Enabled with the `v2c` feature of `vesta-drivers` (on in `vesta-hubd` and in the app's `hub`
@@ -16,7 +17,7 @@ feature). Config key: `"driver": "v2c"`.
 
 | Endpoint | Type | What it shows | What it can do |
 |---|---|---|---|
-| `charger` | `ev_charger` | status in plain words, power to the car, this charge (energy, time), set and measured current, mode, locked, charging hours (on/off; the hours themselves once saved from the panel) | pause / resume, charging current, solar modes (solar installs), lock / unlock, charging hours on / off; with a `cloud_api_key`, change the hours (start, end, days; two time windows) |
+| `charger` | `ev_charger` | status in plain words, power to the car, this charge (energy, time), set and measured current, mode, locked, charging hours (on/off; with a `cloud_api_key`, the hours themselves, as last read or saved, with where from and when) | pause / resume, charging current, solar modes (solar installs), lock / unlock, charging hours on / off; with a `cloud_api_key`, read the hours set on the charger and change them (start, end, days; two time windows) |
 | `grid` | `meter` (`grid`) | import (+) / export (−), contracted power as `limit_w` | — |
 | `house` | `meter` (`house`) | the whole home's consumption, car included | — |
 | `solar` | `meter` (`solar`) | solar production (only with `meters.solar`) | — |
@@ -52,7 +53,7 @@ feature). Config key: `"driver": "v2c"`.
 | `meters` | grid + house | Which readings to show. The charger cannot tell whether its clamp, solar panels or a battery exist. `solar` also enables the solar charging modes. |
 | `rediscover` | `true` | Follow the charger to a new address (see below). |
 | `charger_id` | — | The charger's ID (shown in its app). Optional: learned from the first reading. |
-| `cloud_api_key` | — | Optional. A key for V2C's cloud API, **only** to save charging hours from the panel. A secret: see below. |
+| `cloud_api_key` | — | Optional. A key for V2C's cloud API, **only** to read and save charging hours from the panel. A secret: see below. |
 
 ## Charging hours
 
@@ -66,7 +67,7 @@ down.
 | | Local HTTP API | V2C cloud API |
 |---|---|---|
 | Switch the charger's timers on / off | yes: `Timer` (`/write/Timer=0/1`, read in `RealTimeData`) | — (not used) |
-| Read the hours (start, end, days) | **no**: no key or Modbus register holds them | yes, undocumented: `GET /device/reported` |
+| Read the hours (start, end, days) | **no**: no key or Modbus register holds them | yes: `GET /device/reported` (documented endpoint, undocumented fields) |
 | Write the hours | **no** | yes: `POST /device/timer` |
 | Needs | the home network | internet, a V2C account and an API key |
 
@@ -87,11 +88,19 @@ down.
   `{"timeStart": "22:00", "timeEnd": "06:00", "daysOfWeek": "123"}` ("1=Monday … 7=Sunday");
   answers `200 "Command executed successfully"` (no body schema), `400`, `401`, `500`. No
   documented way to read, delete or disable one timer.
-- **Reading the hours back** is undocumented: V2C's own Telegram bot
-  (`github.com/V2Charge/Bot-Telegram-V2C`, `src/callbacks/ScheduleInfo.js`, Oct 2026) reads
-  `GET /device/reported?deviceId=<ID>` fields `hourstart_00`, `minutestart_00`, `hourend_00`,
-  `minuteend_00`, `daysofweek_00` (timer 1) and the same with `_01` (timer 2);
-  `daysofweek = "8"` means the timer is not set; `programed: 0` means nothing is scheduled.
+- **Reading the hours**: `openapi.yaml` documents `GET /device/reported` ("Retrieve Device Last
+  Reported Status (Shadow)": "the last known status and data reported by the device", one required
+  query parameter `deviceId`, answers `200`, `400`, `401`, `500`) but **no response schema**, so
+  its fields are undocumented. V2C's own Telegram bot (`github.com/V2Charge/Bot-Telegram-V2C`,
+  re-checked 2026-11): `src/api.js` sends exactly `GET /device/reported` with `params: { deviceId }`
+  and the `apikey` header to `https://v2c.cloud/kong/v2c_service`, and uses the parsed JSON object
+  as is; `src/callbacks/ScheduleInfo.js` reads `hourstart_00`, `minutestart_00`, `hourend_00`,
+  `minuteend_00`, `daysofweek_00` (timer 1) and the same with `_01` (timer 2), treats
+  `daysofweek = "8"` as "not set", reads the other `daysofweek` digits `1`…`7` as Monday…Sunday,
+  and shows "nothing scheduled" when `programed` is `0`. The community `HomeAssistant-V2C-Cloud`
+  integration (`custom_components/v2c_cloud/v2c_cloud.py`) notes that "some endpoints reply with
+  json encoded as text/plain" and parses a `/device/reported` answer that arrives as a JSON
+  string a second time; it never retries `429` ("every retry consumes quota").
 - **Two timers**: "You can create up to 2 timers" (V2C's support pages on scheduling and on
   configuring V2C Cloud).
 - **The hours are kept in the charger**: they can be programmed over Bluetooth alone, with no
@@ -104,25 +113,56 @@ down.
   `/device/timer` request "still returns HTTP 200" (its PR #55), never retries `429` (each retry
   spends quota), and takes the cloud's `deviceId` from `/pairings/me`, using it as the local `ID`.
 
+### What VESTA relies on in the cloud's answers
+
+Only these, and nothing else in the answer:
+
+| Request | Field | Used as |
+|---|---|---|
+| `GET /device/reported?deviceId=<ID>` | `hourstart_0N`, `minutestart_0N`, `hourend_0N`, `minuteend_0N` (N = 0, 1; numbers or numeric strings) | start and end of timer N |
+| | `daysofweek_0N` (string or number of digits `1`–`7`, Monday = 1) | its days; `"8"`: timer N is not set |
+| | the object as JSON, or wrapped in a list or a `data` field, or as text inside a JSON string | (all accepted) |
+| `POST /device/timer?deviceId=<ID>&timerId=<N>` | any `2xx` | the write was accepted (then checked by the read above) |
+
+`programed` and every other field are ignored: whether the hours are on comes from the local
+`Timer`. If the timer fields are missing, the read fails and nothing changes.
+
 ### The design
 
-- **Saving** (`set_charging_schedule`) is the only time the cloud is used: VESTA writes both
-  timers (`POST /device/timer`, `timerId` 0 and 1; one window goes into both, since a timer
-  cannot be cleared), reads them back (`GET /device/reported`) because a `200` does not prove the
-  charger took them, then switches the schedule on or off **locally** (`/write/Timer`). Three
-  cloud calls per save, well within the daily limit.
-- **Daily operation stays local**: reading, pause/resume, current, lock, and switching the hours
-  on and off never touch the cloud. VESTA does not read the hours from the cloud otherwise, so it
-  shows the hours **last saved from the panel** (`reports_windows: false`); after a restart of the
-  Hub they are unknown again until the next save (they are kept in memory only). Hours changed in
-  V2C's app do not show on the panel.
-- **The cloud requests are a closed list** (`cloud::CloudRequest`: the timer write and the
-  read-back). There is no way to reach the cloud's endpoints for the contracted power, dynamic
-  power control, current limits or anything else; a test sends every command and checks.
+- **Saving** (`set_charging_schedule`): VESTA writes both timers (`POST /device/timer`,
+  `timerId` 0 and 1; one window goes into both, since a timer cannot be cleared), reads them back
+  (`GET /device/reported`) because a `200` does not prove the charger took them, then switches the
+  schedule on or off **locally** (`/write/Timer`). Three cloud calls per save, well within the
+  daily limit.
+- **Reading** (`refresh_charging_schedule`, `refreshable: true`): the panel asks for it when
+  someone opens the hours editor, and only then; nothing reads the cloud on a timer. One
+  `GET /device/reported`, the same request as the read-back. **At most once per 30 s per
+  charger**: asking sooner answers like the last read did (also when it failed, so a person
+  tapping again does not spend the daily quota); a save's read-back counts as a read. The
+  charger's hours, also those changed in V2C's app, then show on the panel. Nothing is written
+  to the charger.
+- **One cloud request at a time**: a read never races a save.
+- **Where the hours came from**: the panel shows the hours with their source and time ("Hours
+  read from the charger just now", "saved from this screen"), from `state.charging_schedule.origin`.
+- **Kept across restarts**: the last known hours (windows, source, time) are kept in the
+  device's state (one JSON file per device in the Hub's state folder; see `vesta-hubd
+  --state-dir`) and restored at start, marked as the last known ones (`origin.restored`), with no
+  cloud call. Only with a `cloud_api_key` and not `read_only`. The state never holds the key, the
+  charger's ID or its address (a test checks); unreadable state is ignored.
+- **Daily operation stays local**: reading the charger, pause/resume, current, lock, and switching
+  the hours on and off never touch the cloud.
+- **The cloud requests are a closed list** (`cloud::CloudRequest`: the timer write and
+  `/device/reported`, for the read-back and the read on request). There is no way to reach the
+  cloud's endpoints for the contracted power, dynamic power control, current limits or anything
+  else; a test sends every command (and a read after each) and checks methods, paths, query
+  keys and bodies.
 - **Errors**: no internet, a wrong key (`401`/`403`), the daily limit (`429`) or a charger that did
   not take the hours: the save fails, the panel says so in plain words, and nothing is switched on
   the charger. Each cloud request has 5 s and the cloud part 13.5 s; the whole save, local write
-and fresh reading included, ends within 18 s (the Hub gives slow commands 20 s).
+  and fresh reading included, ends within 18 s (the Hub gives slow commands 20 s). A read that
+  fails (same reasons, or an answer without the timer fields) changes nothing: the editor still
+  opens with the last known hours and a gentle note asking whether the home's internet works.
+  Errors never quote the key or the charger's ID.
 - **Without a key**, the panel shows the schedule's on/off switch only, and the hours are set in
   V2C's app as before.
 
@@ -145,10 +185,14 @@ That breaks rule 7, so it is not implemented.
 3. Restart the Hub. The charger's "everything" dialog now has **Change hours**.
 
 The key is a secret: whoever has it controls the charger through V2C's cloud. VESTA never logs
-it, never shows it on a screen or in the API, and config errors never quote it. If it leaks, make
+it, never shows it on a screen or in the API, never keeps it in the device's state, and config
+and cloud errors never quote it. If it leaks, make
 a new one on v2c.cloud (the old one stops working).
 
 ### Not known yet (checked in the supervised live test)
+
+- How quickly `/device/reported` (the cloud's "shadow" of the charger) reflects hours changed in
+  V2C's app, and whether hours set over Bluetooth alone reach it at all.
 
 - Whether the cloud numbers the timers 0/1 or 1/2 (`timerId`). V2C's only example is `1`; the
   read-back fields end in `_00`/`_01`; a community client says "0 or 1". VESTA uses 0 and 1: if
@@ -176,8 +220,8 @@ a new one on v2c.cloud (the old one stops working).
   ignored and commands are refused at once, so VESTA never controls the wrong charger.
 - **Commands** send exactly one write, wait at least 1 s after the previous write (some firmware
   mixes up writes sent together), then read the charger again so the screen shows the result
-  before the command is confirmed (within the Hub's 5 s). Saving charging hours is the exception
-  (cloud, then one local write; see [Charging hours](#charging-hours)).
+  before the command is confirmed (within the Hub's 5 s). Saving and reading charging hours are
+  the exceptions (cloud, then at most one local write; see [Charging hours](#charging-hours)).
 - **Meter errors**: while `SlaveError` is not 0 the clamp/meter readings are not real; the
   meters are not updated (logged once). The charger's own power control deals with it.
 
@@ -266,9 +310,9 @@ keeps the home under its contracted power by itself; VESTA must not weaken that,
 accident. The writes the driver can send are a closed list (`api::Write`): `Paused`, `Locked`,
 `Timer`, `Intensity` and `DynamicPowerMode` 2/3/4. A test sends every command, with every
 combination of charger settings and thousands of currents, and checks nothing else ever leaves.
-The cloud gets a closed list too (`cloud::CloudRequest`): the timer write and its read-back,
-only when someone saves charging hours; another test sends every command and checks the cloud
-never gets anything else.
+The cloud gets a closed list too (`cloud::CloudRequest`): the timer write and
+`/device/reported` (the read-back after a save, and the read when someone opens the hours
+editor); another test sends every command and checks the cloud never gets anything else.
 
 | Never written | Why |
 |---|---|
@@ -303,8 +347,8 @@ Wi-Fi password private (or put the charger on a separate network for devices).
 
 ## Not supported (yet)
 
-- Showing hours changed in V2C's app, or keeping the saved hours across a Hub restart (see
-  [The design](#the-design)).
+- Showing hours changed in V2C's app before someone opens the hours editor (by design: the
+  cloud is only read when someone asks).
 - Phase switching (`ChargeMode`), LED brightness, the contracted power and the app's power
   profiles: see above.
 - Lifetime energy counters: the local API only reports the current session.
