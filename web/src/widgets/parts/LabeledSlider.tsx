@@ -86,6 +86,9 @@ export function LabeledSlider({
         onPointerDown={() => {
           pointer.current = true
         }}
+        onKeyDown={() => {
+          pointer.current = false
+        }}
         onValueChange={(values) => {
           const next = values[0]
           if (next !== undefined) setDraft(next)

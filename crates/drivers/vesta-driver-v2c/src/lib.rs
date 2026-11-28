@@ -97,8 +97,9 @@ struct Timing {
     command_budget: Duration,
     /// Each request to the cloud.
     cloud_timeout: Duration,
-    /// Saving charging hours, cloud and local write included (the Hub
-    /// gives slow commands 20 s).
+    /// Saving charging hours, cloud, local write and fresh reading
+    /// included (the Hub gives slow commands 20 s). The cloud gets this
+    /// minus `command_budget`.
     schedule_budget: Duration,
 }
 
@@ -371,14 +372,14 @@ impl V2cDriver {
     }
 
     /// Asks the device loop for a fresh reading and waits (within the
-    /// command's time) until it was published, so the screen shows the
-    /// result before the command is confirmed.
-    async fn refresh(&self, started: Instant) {
+    /// command's `budget` since `started`) until it was published, so the
+    /// screen shows the result before the command is confirmed.
+    async fn refresh(&self, started: Instant, budget: Duration) {
         let (done, published) = oneshot::channel();
         if self.refresh_tx.try_send(done).is_err() {
             return;
         }
-        let remaining = self.timing.command_budget.saturating_sub(started.elapsed());
+        let remaining = budget.saturating_sub(started.elapsed());
         let _ = timeout(remaining, published).await;
     }
 
@@ -407,11 +408,14 @@ impl V2cDriver {
             .map(|i| windows.get(i).or(windows.first()).cloned())
             .collect::<Option<_>>()
             .ok_or(DriverError::Unsupported)?;
-        let remaining = self
+        // The cloud gets what is left once the local write and the fresh
+        // reading (a normal command's time) are set aside.
+        let for_cloud = self
             .timing
             .schedule_budget
+            .saturating_sub(self.timing.command_budget)
             .saturating_sub(started.elapsed());
-        timeout(remaining, self.write_timers(cloud, &device_id, &timers))
+        timeout(for_cloud, self.write_timers(cloud, &device_id, &timers))
             .await
             .map_err(|_| DriverError::Timeout)??;
         let mut unique: Vec<ChargingWindow> = Vec::new();
@@ -423,7 +427,7 @@ impl V2cDriver {
         *lock(&self.saved_windows) = Some(unique);
         // On or off, on the charger itself (no internet needed).
         self.send(Write::Timer(enabled)).await?;
-        self.refresh(started).await;
+        self.refresh(started, self.timing.schedule_budget).await;
         Ok(())
     }
 
@@ -629,7 +633,7 @@ impl DeviceDriver for V2cDriver {
         }
         let write = self.plan(cmd)?;
         self.send(write).await?;
-        self.refresh(started).await;
+        self.refresh(started, self.timing.command_budget).await;
         Ok(())
     }
 

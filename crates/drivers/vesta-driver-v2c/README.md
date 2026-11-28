@@ -121,7 +121,8 @@ down.
   power control, current limits or anything else; a test sends every command and checks.
 - **Errors**: no internet, a wrong key (`401`/`403`), the daily limit (`429`) or a charger that did
   not take the hours: the save fails, the panel says so in plain words, and nothing is switched on
-  the charger. Each cloud request has 5 s; the whole save 18 s (the Hub gives slow commands 20 s).
+  the charger. Each cloud request has 5 s and the cloud part 13.5 s; the whole save, local write
+and fresh reading included, ends within 18 s (the Hub gives slow commands 20 s).
 - **Without a key**, the panel shows the schedule's on/off switch only, and the hours are set in
   V2C's app as before.
 
