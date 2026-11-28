@@ -5,6 +5,7 @@ members = [
     "crates/vesta-hub",
     "crates/vesta-drivers",
     "crates/drivers/vesta-driver-sim",
+    "crates/drivers/vesta-driver-v2c",
     "apps/hubd",
     "apps/tauri/src-tauri",
     "apps/tauri/plugins/panel",
@@ -24,6 +25,7 @@ vesta-hub = { path = "crates/vesta-hub" }
 # Drivers are opt-in per Cargo feature; members enable the ones they need.
 vesta-drivers = { path = "crates/vesta-drivers", default-features = false }
 vesta-driver-sim = { path = "crates/drivers/vesta-driver-sim" }
+vesta-driver-v2c = { path = "crates/drivers/vesta-driver-v2c" }
 # The app's own Tauri plugin: native Android/iOS code for the panel window.
 tauri-plugin-vesta-panel = { path = "apps/tauri/plugins/panel" }
 
@@ -39,6 +41,9 @@ futures-util = { version = "0.3", default-features = false }
 getrandom = "0.3"
 jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
 percent-encoding = "2.3"
+# HTTP client for drivers that talk to devices on the home network (plain
+# HTTP on the LAN: no TLS, no proxy, no HTTP/2).
+reqwest = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Constant-time comparison of login codes and session ids.

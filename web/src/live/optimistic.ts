@@ -4,7 +4,15 @@
  * cause; widgets render that prediction marked as pending until a matching
  * `state` arrives from the home.
  */
-import type { Capabilities, CapabilityState, Command, CoverMotion, CoverState, Endpoint } from '@/api/generated'
+import type {
+  Capabilities,
+  CapabilityState,
+  Command,
+  CoverMotion,
+  CoverState,
+  Endpoint,
+  EvChargerState,
+} from '@/api/generated'
 
 /** Capabilities that have a state (everything except `trigger` and `doorbell`). */
 export type StatefulCapability = CapabilityState['capability']
@@ -37,6 +45,29 @@ function coverMotion(command: Extract<Command, { capability: 'cover' }>, state: 
       if (command.position === current) return 'stopped'
       return command.position > current ? 'opening' : 'closing'
     }
+  }
+}
+
+/**
+ * What a charger command visibly changes. `resume` predicts nothing: the
+ * charger decides whether the car charges, waits or stays connected.
+ */
+function evChargerPrediction(command: Extract<Command, { capability: 'ev_charger' }>): Partial<EvChargerState> {
+  switch (command.action) {
+    case 'pause':
+      return { status: 'paused', power_w: 0 }
+    case 'resume':
+      return {}
+    case 'set_current':
+      return { current_a: command.amps }
+    case 'set_mode':
+      return { mode: command.mode }
+    case 'lock':
+      return { locked: true }
+    case 'unlock':
+      return { locked: false }
+    case 'set_schedule':
+      return { schedule_enabled: command.enabled }
   }
 }
 
@@ -77,8 +108,13 @@ export function predict(command: Command, endpoint: Endpoint | undefined): Predi
       }
     case 'trigger':
       return { predicted: {}, confirmsWith: null }
-    case 'ev_charger':
-      return { predicted: {}, confirmsWith: 'ev_charger' }
+    case 'ev_charger': {
+      const partial = evChargerPrediction(command)
+      return {
+        predicted: Object.keys(partial).length === 0 ? {} : { ev_charger: partial },
+        confirmsWith: 'ev_charger',
+      }
+    }
   }
 }
 

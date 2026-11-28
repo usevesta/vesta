@@ -15,6 +15,7 @@
 //! | `garage_door` | `main` (`garage_door`) | `cover` without position, ~5 s travel, reports open/closed |
 //! | `door_strike` | `main` (`door`) | `trigger` |
 //! | `doorbell` | `main` (`doorbell`) | `doorbell`, `occupancy` |
+//! | `ev_charger` | `charger` (`ev_charger`); `grid`, `house`, `solar`, `battery` (`meter`) | `ev_charger` with every feature; `power_meter` per role (see `ev.rs`) |
 //!
 //! Options:
 //! - `latency_ms` (default 150): delay before a command is applied, so the
@@ -25,11 +26,16 @@
 //! - `seed`: makes failures deterministic (tests).
 //! - `ring_every_sec` (`doorbell` only): rings periodically, emitting
 //!   `occupancy.detected` and `doorbell.pressed`.
+//! - `solar` (`ev_charger` only, default `true`): the home has solar panels.
+//! - `battery` (`ev_charger` only, default `false`): the home has a battery.
 //!
 //! [`demo`] holds a whole simulated home (config and dashboard) for
 //! `vesta-hubd --dev` and for the app when no home is set up yet.
 
+mod ev;
+
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -46,6 +52,8 @@ use vesta_core::{
     OnOffCapability, OnOffCommand, OnOffState, Percent, TriggerCapability, TriggerCommand,
     async_trait,
 };
+
+use crate::ev::EvSim;
 
 /// Default simulated command latency.
 pub const DEFAULT_LATENCY_MS: u64 = 150;
@@ -73,6 +81,7 @@ pub enum SimModel {
     GarageDoor,
     DoorStrike,
     Doorbell,
+    EvCharger,
 }
 
 /// The device's driver config (`devices[].config` in `config.json`).
@@ -88,6 +97,12 @@ pub struct SimConfig {
     pub ring_every_sec: Option<u64>,
     #[serde(default)]
     pub seed: Option<u64>,
+    /// `ev_charger` only: the home has solar panels (default `true`).
+    #[serde(default)]
+    pub solar: Option<bool>,
+    /// `ev_charger` only: the home has a battery (default `false`).
+    #[serde(default)]
+    pub battery: Option<bool>,
 }
 
 const fn default_latency_ms() -> u64 {
@@ -103,6 +118,8 @@ impl SimConfig {
             failure_rate: 0.0,
             ring_every_sec: None,
             seed: None,
+            solar: None,
+            battery: None,
         }
     }
 
@@ -121,6 +138,9 @@ impl SimConfig {
         }
         if self.latency_ms > MAX_LATENCY_MS {
             return invalid("latency_ms must be at most 60000");
+        }
+        if (self.solar.is_some() || self.battery.is_some()) && self.model != SimModel::EvCharger {
+            return invalid("solar and battery are only valid for the ev_charger model");
         }
         match self.ring_every_sec {
             Some(_) if self.model != SimModel::Doorbell => {
@@ -161,6 +181,43 @@ struct Changed {
 #[derive(Debug)]
 struct SimState {
     endpoints: Vec<SimEndpoint>,
+    /// `ev_charger` only: the charger, the car and the home's meters.
+    ev: Option<EvSim>,
+}
+
+impl SimState {
+    /// Copies the EV simulation's readings into the endpoints.
+    fn sync_ev(&mut self) {
+        if let Some(ev) = &self.ev {
+            for sim in &mut self.endpoints {
+                ev::sync(ev, std::slice::from_mut(&mut sim.endpoint));
+            }
+        }
+    }
+
+    /// Every (endpoint, capability) of an EV charger device.
+    fn ev_kinds(&self) -> Vec<(EndpointId, CapabilityKind)> {
+        if self.ev.is_none() {
+            return Vec::new();
+        }
+        self.endpoints
+            .iter()
+            .flat_map(|sim| {
+                sim.endpoint
+                    .capabilities
+                    .kinds()
+                    .into_iter()
+                    .map(|kind| (sim.endpoint.id.clone(), kind))
+            })
+            .collect()
+    }
+
+    fn state_of(&self, endpoint: &EndpointId, kind: CapabilityKind) -> Option<CapabilityState> {
+        self.endpoints
+            .iter()
+            .find(|sim| &sim.endpoint.id == endpoint)?
+            .state_of(kind)
+    }
 }
 
 #[derive(Debug)]
@@ -228,6 +285,8 @@ impl SimEndpoint {
             CapabilityKind::Cover => caps.cover.as_ref()?.state.map(Into::into),
             CapabilityKind::Fan => caps.fan.as_ref()?.state.map(Into::into),
             CapabilityKind::Occupancy => caps.occupancy.as_ref()?.state.map(Into::into),
+            CapabilityKind::PowerMeter => caps.power_meter.as_ref()?.state.map(Into::into),
+            CapabilityKind::EvCharger => caps.ev_charger.as_ref()?.state.clone().map(Into::into),
             _ => None,
         }
     }
@@ -397,6 +456,8 @@ impl SimModel {
                     ..Capabilities::default()
                 },
             ))],
+            // Built from the simulation in `SimDriver::new`.
+            Self::EvCharger => Vec::new(),
             Self::Doorbell => vec![plain(endpoint(
                 main,
                 "Doorbell",
@@ -416,7 +477,18 @@ impl SimModel {
 impl SimDriver {
     pub fn new(config: SimConfig) -> Result<Self, DriverError> {
         config.validate()?;
-        let endpoints = config.model.endpoints()?;
+        let ev = (config.model == SimModel::EvCharger).then(|| {
+            EvSim::new(
+                config.solar.unwrap_or(true),
+                config.battery.unwrap_or(false),
+            )
+        });
+        let mut endpoints = config.model.endpoints()?;
+        if let Some(ev) = &ev {
+            endpoints.extend(ev::endpoints(ev)?.into_iter().map(plain));
+        }
+        let mut state = SimState { endpoints, ev };
+        state.sync_ev();
         let rng = match config.seed {
             Some(seed) => fastrand::Rng::with_seed(seed),
             None => fastrand::Rng::new(),
@@ -424,7 +496,7 @@ impl SimDriver {
         let (changed_tx, changed_rx) = mpsc::channel(CHANGE_BUFFER);
         Ok(Self {
             config,
-            state: Mutex::new(SimState { endpoints }),
+            state: Mutex::new(state),
             rng: Mutex::new(rng),
             changed_tx,
             changed_rx: tokio::sync::Mutex::new(changed_rx),
@@ -478,8 +550,16 @@ impl SimDriver {
         &self,
         endpoint: &EndpointId,
         cmd: Command,
-    ) -> Result<Vec<CapabilityKind>, DriverError> {
+    ) -> Result<Vec<(EndpointId, CapabilityKind)>, DriverError> {
         let mut state = self.lock_state();
+        if let Command::EvCharger(cmd) = cmd {
+            // The charger also changes what the meters read: report them
+            // all (`run` only publishes meters that really changed).
+            let ev = state.ev.as_mut().ok_or(DriverError::Unsupported)?;
+            ev.apply(cmd)?;
+            state.sync_ev();
+            return Ok(state.ev_kinds());
+        }
         let sim = state
             .endpoints
             .iter_mut()
@@ -570,7 +650,10 @@ impl SimDriver {
             }
             Command::Lock(_) | Command::EvCharger(_) => return Err(DriverError::Unsupported),
         }
-        Ok(changed)
+        Ok(changed
+            .into_iter()
+            .map(|kind| (endpoint.clone(), kind))
+            .collect())
     }
 
     fn state_of(&self, endpoint: &EndpointId, kind: CapabilityKind) -> Option<CapabilityState> {
@@ -627,6 +710,42 @@ impl SimDriver {
             }
         }
         updates
+    }
+
+    /// Advances the EV simulation one tick. Returns the states that
+    /// changed.
+    fn step_ev(&self) -> Vec<(EndpointId, CapabilityState)> {
+        let noise = self
+            .rng
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .f64()
+            .mul_add(2.0, -1.0);
+        let mut state = self.lock_state();
+        let Some(ev) = state.ev.as_mut() else {
+            return Vec::new();
+        };
+        ev.tick(ev::EV_TICK.as_secs_f64(), noise);
+        let before: Vec<_> = state
+            .ev_kinds()
+            .into_iter()
+            .map(|(id, kind)| {
+                let previous = state.state_of(&id, kind);
+                (id, kind, previous)
+            })
+            .collect();
+        state.sync_ev();
+        before
+            .into_iter()
+            .filter_map(|(id, kind, previous)| {
+                let now = state.state_of(&id, kind)?;
+                (Some(&now) != previous.as_ref()).then_some((id, now))
+            })
+            .collect()
+    }
+
+    fn has_ev(&self) -> bool {
+        self.lock_state().ev.is_some()
     }
 
     /// Sets the doorbell's occupancy. Returns the new state if it exists.
@@ -692,12 +811,9 @@ impl DeviceDriver for SimDriver {
         if self.should_fail() {
             return Err(DriverError::Protocol("simulated failure".to_owned()));
         }
-        for kind in self.apply(endpoint, cmd)? {
+        for (endpoint, kind) in self.apply(endpoint, cmd)? {
             self.changed_tx
-                .send(Changed {
-                    endpoint: endpoint.clone(),
-                    kind,
-                })
+                .send(Changed { endpoint, kind })
                 .await
                 .map_err(|_| DriverError::SinkClosed)?;
         }
@@ -717,6 +833,14 @@ impl DeviceDriver for SimDriver {
         let mut next_ring = ring_every.map(|every| Instant::now() + every);
         let mut clear_occupancy: Option<Instant> = None;
         let mut next_step: Option<Instant> = None;
+        let mut next_ev_tick = self.has_ev().then(|| Instant::now() + ev::EV_TICK);
+        // Meter readings already on screen: a command only republishes
+        // the ones it changed.
+        let mut meters: HashMap<EndpointId, CapabilityState> = self
+            .all_states()
+            .into_iter()
+            .filter(|(_, state)| state.kind() == CapabilityKind::PowerMeter)
+            .collect();
         loop {
             if self.is_moving() {
                 next_step.get_or_insert_with(|| Instant::now() + MOTION_TICK);
@@ -729,6 +853,23 @@ impl DeviceDriver for SimDriver {
                         return Ok(());
                     };
                     if let Some(state) = self.state_of(&endpoint, kind) {
+                        // Repeated commands (e.g. "on" twice) still confirm;
+                        // meters only report real changes.
+                        if kind == CapabilityKind::PowerMeter {
+                            if meters.get(&endpoint) == Some(&state) {
+                                continue;
+                            }
+                            meters.insert(endpoint.clone(), state.clone());
+                        }
+                        sink.state(&endpoint, state).await?;
+                    }
+                }
+                () = sleep_until_opt(next_ev_tick) => {
+                    next_ev_tick = Some(Instant::now() + ev::EV_TICK);
+                    for (endpoint, state) in self.step_ev() {
+                        if state.kind() == CapabilityKind::PowerMeter {
+                            meters.insert(endpoint.clone(), state.clone());
+                        }
                         sink.state(&endpoint, state).await?;
                     }
                 }
@@ -755,8 +896,8 @@ impl DeviceDriver for SimDriver {
 }
 
 /// The built-in simulated home: lights, a ceiling fan with a light, a
-/// blind, a garage door, a door strike and a doorbell that rings every
-/// 3 minutes. Every device uses the `sim` driver, so there are no secrets.
+/// blind, a garage door, a door strike, a doorbell that rings every
+/// 3 minutes and an EV charger with solar panels. Every device uses the `sim` driver, so there are no secrets.
 pub mod demo {
     /// `config.json` of the simulated home.
     pub const CONFIG: &str = include_str!("../fixtures/demo-config.json");

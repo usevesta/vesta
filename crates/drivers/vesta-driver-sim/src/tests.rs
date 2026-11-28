@@ -107,6 +107,8 @@ fn config_is_validated() {
         json!({ "model": "light", "ring_every_sec": 10 }),
         json!({ "model": "doorbell", "ring_every_sec": 0 }),
         json!({ "model": "light", "colour": "red" }),
+        json!({ "model": "light", "solar": true }),
+        json!({ "model": "doorbell", "battery": false }),
         json!("light"),
     ] {
         assert!(
@@ -577,6 +579,123 @@ async fn doorbell_without_interval_stays_quiet() {
     sim.skip_initial(1).await;
     tokio::time::sleep(Duration::from_secs(3600)).await;
     sim.assert_quiet();
+}
+
+#[test]
+fn ev_charger_describes_the_charger_and_the_homes_meters() {
+    let endpoints = |config| driver(config).describe().endpoints;
+    let ids = |endpoints: &[Endpoint]| {
+        endpoints
+            .iter()
+            .map(|e| e.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    let home = endpoints(json!({ "model": "ev_charger" }));
+    assert_eq!(ids(&home), ["charger", "grid", "house", "solar"]);
+    let charger = &home[0];
+    assert_eq!(charger.endpoint_type, EndpointType::EvCharger);
+    let cap = charger.capabilities.ev_charger.as_ref().unwrap();
+    assert!(cap.features.pause && cap.features.adjustable_current);
+    assert!(cap.features.lock && cap.features.schedule);
+    assert_eq!(
+        cap.features.modes,
+        [
+            vesta_core::EvChargeMode::Manual,
+            vesta_core::EvChargeMode::Solar,
+            vesta_core::EvChargeMode::SolarGrid
+        ]
+    );
+    // Starts with state, never invented later.
+    let state = cap.state.as_ref().unwrap();
+    assert_eq!(state.status, vesta_core::EvChargerStatus::Charging);
+    assert_eq!(cap.current_range(), (6.0, 25.0));
+
+    let roles: Vec<_> = home[1..]
+        .iter()
+        .map(|e| {
+            assert_eq!(e.endpoint_type, EndpointType::Meter);
+            e.capabilities.power_meter.as_ref().unwrap().features.role
+        })
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            vesta_core::MeterRole::Grid,
+            vesta_core::MeterRole::House,
+            vesta_core::MeterRole::Solar
+        ]
+    );
+    let grid = home[1].capabilities.power_meter.as_ref().unwrap();
+    assert_eq!(grid.state.unwrap().limit_w, Some(5750.0));
+
+    let no_sun = endpoints(json!({ "model": "ev_charger", "solar": false, "battery": true }));
+    assert_eq!(ids(&no_sun), ["charger", "grid", "house", "battery"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn ev_charger_reports_changes_and_follows_commands() {
+    use vesta_core::{EvChargerCommand, EvChargerState, EvChargerStatus};
+
+    fn charger_state(change: &StateChange) -> EvChargerState {
+        match &change.state {
+            CapabilityState::EvCharger(state) => state.clone(),
+            other => panic!("expected charger state, got {other:?}"),
+        }
+    }
+
+    let charger = driver(json!({ "model": "ev_charger", "latency_ms": 0, "seed": 7 }));
+    let mut sim = run(&charger);
+    sim.skip_initial(4).await;
+
+    // The next tick moves the readings: at least the meters change.
+    let first = sim.next_state().await;
+    assert!(first.target.to_string().starts_with("sim_device/"));
+    while sim.rx.try_recv().is_ok() {}
+
+    let main = ep("charger");
+    charger
+        .execute(&main, Command::EvCharger(EvChargerCommand::Pause))
+        .await
+        .unwrap();
+    let change = sim.next_state().await;
+    assert_eq!(change.target, target("charger"));
+    let paused = charger_state(&change);
+    assert_eq!(paused.status, EvChargerStatus::Paused);
+    assert_eq!(paused.power_w, 0.0);
+    // The grid and the house no longer power the car; the sun did not
+    // change, so the solar meter stays quiet.
+    assert_eq!(sim.next_state().await.target, target("grid"));
+    assert_eq!(sim.next_state().await.target, target("house"));
+
+    charger
+        .execute(
+            &main,
+            Command::EvCharger(EvChargerCommand::SetCurrent { amps: 99.0 }),
+        )
+        .await
+        .unwrap();
+    let state = charger_state(&sim.next_state().await);
+    assert_eq!(state.current_a, 25.0, "clamped to the charger's limit");
+
+    // Meters are not on the charger endpoint, and unknown modes fail.
+    assert!(matches!(
+        charger
+            .execute(&ep("grid"), Command::EvCharger(EvChargerCommand::Resume))
+            .await,
+        Err(DriverError::Unsupported)
+    ));
+    assert!(matches!(
+        charger
+            .execute(
+                &main,
+                Command::EvCharger(EvChargerCommand::SetMode {
+                    mode: vesta_core::EvChargeMode::Scheduled
+                })
+            )
+            .await,
+        Err(DriverError::Unsupported)
+    ));
 }
 
 #[tokio::test(start_paused = true)]

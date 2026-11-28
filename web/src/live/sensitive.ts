@@ -21,6 +21,9 @@ export function isSensitiveCommand(type: EndpointType, command: Command): boolea
       return command.action === 'unlock' || command.action === 'unlatch'
     case 'cover':
       return guardsAccess(type) && (command.action === 'open' || command.action === 'set_position')
+    case 'ev_charger':
+      // Anyone could charge afterwards.
+      return command.action === 'unlock'
     default:
       return false
   }

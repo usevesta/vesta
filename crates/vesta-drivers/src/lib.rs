@@ -6,6 +6,7 @@
 //! | `driver` key | Feature | Crate |
 //! |---|---|---|
 //! | `sim` | `sim` (default) | `vesta-driver-sim` |
+//! | `v2c` | `v2c` | `vesta-driver-v2c` (V2C Trydan EV chargers) |
 //!
 //! The Hub asks a [`Registry`] to build one driver per configured device and
 //! never learns which crate it came from.
@@ -59,6 +60,11 @@ impl Registry {
         #[cfg(feature = "sim")]
         registry.register("sim", |config| {
             Ok(Arc::new(vesta_driver_sim::SimDriver::from_config(config)?)
+                as Arc<dyn DeviceDriver>)
+        });
+        #[cfg(feature = "v2c")]
+        registry.register("v2c", |config| {
+            Ok(Arc::new(vesta_driver_v2c::V2cDriver::from_config(config)?)
                 as Arc<dyn DeviceDriver>)
         });
         registry
@@ -157,12 +163,38 @@ mod tests {
     fn builds_the_simulator() {
         let registry = Registry::builtin();
         assert!(registry.contains("sim"));
-        assert_eq!(registry.drivers().collect::<Vec<_>>(), ["sim"]);
+        assert_eq!(registry.drivers().next(), Some("sim"));
 
         let driver = registry
             .build(&device("sim", json!({ "model": "ceiling_fan" })))
             .unwrap();
         assert_eq!(driver.describe().endpoints.len(), 2);
+    }
+
+    #[cfg(feature = "v2c")]
+    #[test]
+    fn builds_the_v2c_charger() {
+        let registry = Registry::builtin();
+        assert!(registry.contains("v2c"));
+        let driver = registry
+            .build(&device(
+                "v2c",
+                json!({ "host": "192.0.2.10", "read_only": true }),
+            ))
+            .unwrap();
+        let endpoints = driver.describe().endpoints;
+        assert_eq!(endpoints.len(), 3);
+        assert_eq!(
+            endpoints[0].endpoint_type,
+            vesta_core::EndpointType::EvCharger
+        );
+        assert!(matches!(
+            registry.build(&device("v2c", json!({ "host": "http://192.0.2.10/" }))),
+            Err(BuildError::Driver {
+                source: DriverError::InvalidConfig(_),
+                ..
+            })
+        ));
     }
 
     #[cfg(feature = "sim")]

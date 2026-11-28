@@ -15,6 +15,14 @@ import {
   useDemoDashboardStore,
   type DemoThing,
 } from '@/demo/demo-home'
+import {
+  changeDemoCharger,
+  DEMO_CHARGER_MODES,
+  DEMO_CURRENT_RANGE,
+  startDemoCharger,
+  useDemoCharger,
+  type DemoCharger,
+} from '@/demo/demo-charger'
 import { useDemoStore, type DemoState } from '@/demo/demo-store'
 import { widgetLabel } from '@/editor/model'
 import { isWidgetType, type AnyWidgetSpec, type WidgetSpec } from '@/widgets/registry'
@@ -26,6 +34,8 @@ function demoSpec(
   thing: DemoThing,
   label: string,
   demo: DemoState,
+  charger: DemoCharger,
+  rows: number,
   run: (name: string, command: Promise<boolean>) => void,
   onDoorOpened: (name: string) => void,
 ): WidgetSpec {
@@ -129,6 +139,47 @@ function demoSpec(
     }
     case 'camera':
       return { type: 'camera-preview', props: { label, unavailable: thing.unavailable } }
+    case 'ev':
+      return {
+        type: 'ev-charger',
+        props: {
+          label,
+          rows,
+          pending: charger.pending,
+          status: charger.status,
+          waitingFor: charger.waitingFor,
+          powerW: charger.powerW,
+          sessionEnergyWh: charger.sessionEnergyWh,
+          sessionDurationS: charger.sessionDurationS,
+          currentA: charger.currentA,
+          measuredA: charger.measuredA,
+          currentRange: DEMO_CURRENT_RANGE,
+          autoCurrent: false,
+          mode: charger.mode,
+          modes: DEMO_CHARGER_MODES,
+          locked: charger.locked,
+          scheduleEnabled: charger.scheduleEnabled,
+          readings: charger.readings,
+          onPause: () => {
+            run(label, changeDemoCharger({ paused: true }))
+          },
+          onResume: () => {
+            run(label, changeDemoCharger({ paused: false }))
+          },
+          onCurrentChange: (amps) => {
+            run(label, changeDemoCharger({ currentA: amps }))
+          },
+          onModeChange: (mode) => {
+            run(label, changeDemoCharger({ mode }))
+          },
+          onLockChange: (locked) => {
+            run(label, changeDemoCharger({ locked }))
+          },
+          onScheduleChange: (enabled) => {
+            run(label, changeDemoCharger({ scheduleEnabled: enabled }))
+          },
+        },
+      }
   }
 }
 
@@ -136,6 +187,7 @@ function demoSpec(
 function DemoWidget({ widget }: { widget: Widget }) {
   const { t } = useTranslation()
   const demo = useDemoStore()
+  const charger = useDemoCharger()
 
   if (!isWidgetType(widget.type)) {
     const unknown: AnyWidgetSpec = { type: widget.type, props: widget.props }
@@ -152,6 +204,8 @@ function DemoWidget({ widget }: { widget: Widget }) {
     entry.thing,
     label,
     demo,
+    charger,
+    widget.row_span,
     (name, command) => {
       void command.then((ok) => {
         if (!ok) toast.error(t('widget.commandFailed', { name }))
@@ -174,6 +228,9 @@ export function DemoApp() {
   const dashboard = useDemoDashboardStore((s) => s.dashboard)
   const revision = useDemoDashboardStore((s) => s.revision)
   const items = useMemo(() => demoItems(t), [t])
+
+  // The sample charger runs while the demo is on screen.
+  useEffect(() => startDemoCharger(), [])
 
   useEffect(() => {
     // Built once, in the language the screen starts in (like a real home).

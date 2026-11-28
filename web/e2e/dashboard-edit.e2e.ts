@@ -124,8 +124,8 @@ describe('editing the screen against vesta-hubd --dev', () => {
       { type: 'resizeWidget', pageId: home.id, key: second, size: 'full' },
       { type: 'renameWidget', pageId: home.id, key: second, label: 'Puerta de la calle' },
       { type: 'removeWidget', pageId: home.id, key: third },
-      { type: 'movePage', pageId, by: -1 },
-      { type: 'movePage', pageId, by: -1 },
+      // From the end to the front, one step at a time.
+      ...original.pages.map(() => ({ type: 'movePage' as const, pageId, by: -1 as const })),
     )
     const edited = fromDraft(draft)
 

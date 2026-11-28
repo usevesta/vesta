@@ -4779,6 +4779,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesta-driver-v2c"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "vesta-core",
+]
+
+[[package]]
 name = "vesta-drivers"
 version = "0.1.0"
 dependencies = [
@@ -4787,6 +4800,7 @@ dependencies = [
  "tokio",
  "vesta-core",
  "vesta-driver-sim",
+ "vesta-driver-v2c",
 ]
 
 [[package]]

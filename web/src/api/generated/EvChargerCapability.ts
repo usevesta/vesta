@@ -3,7 +3,8 @@ import type { EvChargerFeatures } from "./EvChargerFeatures";
 import type { EvChargerState } from "./EvChargerState";
 
 /**
- * `ev_charger`. The charger's own limits (e.g. contracted power) always
- * prevail; VESTA never replaces them.
+ * `ev_charger`: an EV charger (Matter: EnergyEVSE). The charger's own
+ * limits (e.g. its contracted-power control) always prevail; VESTA never
+ * replaces them (AGENTS.md rule 7).
  */
 export type EvChargerCapability = { features: EvChargerFeatures, state?: EvChargerState, };

@@ -9,8 +9,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use vesta_core::{
-    ClientMessage, Command, CommandError, Device, DeviceConfig, EndpointType, EventKind,
-    LevelCommand, RejectReason, ServerMessage,
+    CapabilityState, ClientMessage, Command, CommandError, Device, DeviceConfig, EndpointType,
+    EvChargeMode, EvChargerCommand, EvChargerStatus, EvChargerWaitReason, EventKind, LevelCommand,
+    MeterRole, RejectReason, ServerMessage,
 };
 
 const CAPABILITIES_DOC: &str = include_str!("../../../docs/architecture/capabilities.md");
@@ -68,15 +69,28 @@ fn every_capabilities_md_json_example_round_trips() {
         match value.get("type").and_then(Value::as_str) {
             Some("command") => {
                 let ClientMessage::Command(request) = round_trip::<ClientMessage>(&value);
-                assert_eq!(request.target.to_string(), "living_room_fan/light");
-                assert!(!request.confirmed);
-                assert!(matches!(
-                    request.command,
-                    Command::Level(LevelCommand::Set {
-                        transition_ms: Some(300),
-                        ..
-                    })
-                ));
+                match request.target.to_string().as_str() {
+                    "living_room_fan/light" => {
+                        assert!(!request.confirmed);
+                        assert!(matches!(
+                            request.command,
+                            Command::Level(LevelCommand::Set {
+                                transition_ms: Some(300),
+                                ..
+                            })
+                        ));
+                    }
+                    "car_charger/charger" => {
+                        // Sensitive: sent only after the person confirmed.
+                        assert!(request.confirmed);
+                        assert_eq!(
+                            request.command,
+                            Command::EvCharger(EvChargerCommand::Unlock)
+                        );
+                        assert!(request.command.is_sensitive(EndpointType::EvCharger));
+                    }
+                    other => panic!("unexpected command example for {other}"),
+                }
                 seen.command += 1;
             }
             Some(_) => match round_trip::<ServerMessage>(&value) {
@@ -94,7 +108,14 @@ fn every_capabilities_md_json_example_round_trips() {
                     seen.command_result += 1;
                 }
                 ServerMessage::State(state) => {
-                    assert_eq!(state.target.to_string(), "living_room_fan/light");
+                    match (state.target.to_string().as_str(), &state.state) {
+                        ("living_room_fan/light", CapabilityState::Level(_)) => {}
+                        ("car_charger/charger", CapabilityState::EvCharger(charger)) => {
+                            assert_eq!(charger.status, EvChargerStatus::Waiting);
+                            assert_eq!(charger.waiting_for, Some(EvChargerWaitReason::Schedule));
+                        }
+                        (other, state) => panic!("unexpected state example {other}: {state:?}"),
+                    }
                     seen.state += 1;
                 }
                 ServerMessage::Availability(availability) => {
@@ -114,24 +135,28 @@ fn every_capabilities_md_json_example_round_trips() {
             }
             None if value.get("online").is_some() => {
                 let device = round_trip::<Device>(&value);
-                assert_device_example(&device);
+                match device.id.as_str() {
+                    "living_room_fan" => assert_device_example(&device),
+                    "car_charger" => assert_charger_example(&device),
+                    other => panic!("unexpected device example {other}"),
+                }
                 seen.device += 1;
             }
             None => panic!("unclassified JSON example in capabilities.md:\n{value:#}"),
         }
     }
 
-    assert_eq!(seen.device, 1, "{seen:?}");
-    assert_eq!(seen.command, 1, "{seen:?}");
+    assert_eq!(seen.device, 2, "{seen:?}");
+    assert_eq!(seen.command, 2, "{seen:?}");
     assert_eq!(seen.command_result, 1, "{seen:?}");
     assert_eq!(seen.event, 1, "{seen:?}");
-    assert_eq!(seen.state, 1, "{seen:?}");
+    assert_eq!(seen.state, 2, "{seen:?}");
     assert_eq!(seen.availability, 1, "{seen:?}");
     assert_eq!(seen.dashboard_changed, 1, "{seen:?}");
     assert_eq!(seen.device_config, 1, "{seen:?}");
     assert_eq!(
         blocks.len(),
-        8,
+        11,
         "new JSON example in capabilities.md: classify it here"
     );
 }
@@ -170,4 +195,35 @@ fn assert_device_example(device: &Device) {
             .max_kelvin,
         6500
     );
+}
+
+fn assert_charger_example(device: &Device) {
+    let ids: Vec<&str> = device.endpoints.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["charger", "grid", "house"]);
+
+    let charger = &device.endpoints[0];
+    assert_eq!(charger.endpoint_type, EndpointType::EvCharger);
+    let cap = charger.capabilities.ev_charger.as_ref().unwrap();
+    assert!(cap.features.pause && cap.features.lock && cap.features.schedule);
+    assert!(cap.features.modes.is_empty());
+    let state = cap.state.as_ref().unwrap();
+    assert_eq!(state.status, EvChargerStatus::Charging);
+    assert_eq!(state.mode, Some(EvChargeMode::Scheduled));
+    assert_eq!(state.auto_current, Some(true));
+    assert_eq!(cap.current_range(), (6.0, 30.0));
+
+    let grid = device.endpoints[1]
+        .capabilities
+        .power_meter
+        .as_ref()
+        .unwrap();
+    assert_eq!(grid.features.role, MeterRole::Grid);
+    assert_eq!(grid.state.unwrap().limit_w, Some(5700.0));
+    let house = device.endpoints[2]
+        .capabilities
+        .power_meter
+        .as_ref()
+        .unwrap();
+    assert_eq!(house.features.role, MeterRole::House);
+    assert_eq!(house.state.unwrap().energy_wh, None);
 }

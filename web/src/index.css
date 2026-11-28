@@ -52,6 +52,13 @@
   --color-background: var(--background);
   --color-scrim: var(--scrim);
   --color-scrim-foreground: var(--scrim-foreground);
+  /* Energy flow (EV charger widget): one color per kind of power. */
+  --color-energy-grid: var(--energy-grid);
+  --color-energy-solar: var(--energy-solar);
+  --color-energy-house: var(--energy-house);
+  --color-energy-car: var(--energy-car);
+  --color-energy-battery: var(--energy-battery);
+  --color-energy-limit: var(--energy-limit);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -102,6 +109,14 @@
   /* Screensaver: always dim, whatever the preset, so the panel is dark at night. */
   --scrim: oklch(0.08 0 0 / 94%);
   --scrim-foreground: oklch(0.72 0 0);
+
+  /* Energy: readable on white (text and thin lines), distinct in hue. */
+  --energy-grid: oklch(0.55 0.15 255);
+  --energy-solar: oklch(0.7 0.16 78);
+  --energy-house: oklch(0.45 0.03 260);
+  --energy-car: oklch(0.58 0.14 158);
+  --energy-battery: oklch(0.58 0.11 205);
+  --energy-limit: oklch(0.64 0.17 48);
 }
 
 /* ---------- Preset: default (dark) ---------- */
@@ -137,6 +152,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  --energy-grid: oklch(0.72 0.13 250);
+  --energy-solar: oklch(0.84 0.15 85);
+  --energy-house: oklch(0.86 0.02 260);
+  --energy-car: oklch(0.79 0.15 158);
+  --energy-battery: oklch(0.78 0.11 200);
+  --energy-limit: oklch(0.77 0.15 55);
 }
 
 /* ---------- Preset: glass-dark ---------- */
@@ -168,6 +190,13 @@
   --sidebar-accent-foreground: oklch(0.97 0.005 262);
   --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.84 0.1 225 / 70%);
+
+  --energy-grid: oklch(0.76 0.12 248);
+  --energy-solar: oklch(0.86 0.14 88);
+  --energy-house: oklch(0.9 0.025 262);
+  --energy-car: oklch(0.82 0.14 162);
+  --energy-battery: oklch(0.8 0.1 198);
+  --energy-limit: oklch(0.8 0.14 58);
 
   --glass-blur: 18px;
   --scrim: oklch(0.1 0.02 262 / 95%);
@@ -233,5 +262,109 @@
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
+  }
+
+  /*
+   * Energy flow. Only compositor-friendly or tiny repaints: beads moving
+   * along a line (stroke-dashoffset on a few short paths), halos that
+   * scale and fade (transform + opacity), a slowly turning sun. No
+   * per-frame JavaScript. The flow lives in its own layer
+   * (`.energy-layer`) so its repaints never touch the blurred tile.
+   */
+  .energy-layer {
+    contain: layout paint;
+    will-change: transform;
+  }
+  .energy-beads {
+    stroke-dasharray: 0.01px 15.99px;
+    stroke-linecap: round;
+    animation: energy-beads var(--flow-duration, 1.6s) linear infinite;
+  }
+  .energy-beads[data-reverse] {
+    animation-direction: reverse;
+  }
+  .energy-halo {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: energy-halo 2.6s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+  .energy-spin {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: energy-spin 28s linear infinite;
+  }
+  .energy-shimmer {
+    animation: energy-shimmer 2.2s ease-in-out infinite;
+  }
+  .energy-sweep {
+    animation: energy-sweep 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .energy-gauge {
+    transition: stroke-dasharray 700ms cubic-bezier(0.2, 0.7, 0.2, 1), stroke 300ms;
+  }
+  /* Direction arrows replace the moving beads when motion is reduced. */
+  .energy-arrow {
+    display: none;
+  }
+  /* A tile that is not responding shows the last readings, frozen. */
+  [data-frozen] .energy-beads,
+  [data-frozen] .energy-halo,
+  [data-frozen] .energy-spin,
+  [data-frozen] .energy-shimmer,
+  [data-frozen] .energy-sweep {
+    animation-play-state: paused;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .energy-beads {
+      animation: none;
+      stroke-dasharray: none;
+      opacity: 0.55;
+    }
+    .energy-halo,
+    .energy-spin,
+    .energy-shimmer,
+    .energy-sweep {
+      animation: none;
+    }
+    .energy-halo {
+      opacity: 0;
+    }
+    .energy-arrow {
+      display: inline;
+    }
+  }
+}
+
+@keyframes energy-beads {
+  to {
+    stroke-dashoffset: -16px;
+  }
+}
+@keyframes energy-halo {
+  from {
+    transform: scale(0.92);
+    opacity: 0.55;
+  }
+  to {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@keyframes energy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes energy-shimmer {
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes energy-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
   }
 }

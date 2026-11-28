@@ -360,26 +360,49 @@ pub struct PowerMeterFeatures {
     pub bidirectional: bool,
 }
 
+/// Where a meter measures. Decides the sign of `power_w` and where the
+/// meter sits in an energy-flow view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum MeterRole {
+    /// The connection to the grid. Positive = importing, negative =
+    /// exporting.
     Grid,
+    /// Solar production. Positive = producing.
     Solar,
+    /// One appliance or circuit. Positive = consuming.
     Load,
+    /// An EV charger. Positive = consuming.
     Ev,
+    /// The whole home's consumption, including sub-metered loads such as an
+    /// EV charger. Positive = consuming.
+    House,
+    /// A home battery. Positive = discharging (supplying the home),
+    /// negative = charging.
+    Battery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
 pub struct PowerMeterState {
     pub power_w: f64,
-    pub energy_wh: f64,
+    /// Lifetime energy in the role's natural direction. Omitted when the
+    /// device only measures power.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_wh: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy_exported_wh: Option<f64>,
+    /// The most power this connection may draw, e.g. the contracted power
+    /// on a `grid` meter. Informative only: VESTA never enforces it. The
+    /// devices that do (an EV charger's own power control, the utility's
+    /// meter) keep doing it (AGENTS.md rule 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_w: Option<f64>,
 }
 
-/// `ev_charger`. The charger's own limits (e.g. contracted power) always
-/// prevail; VESTA never replaces them.
+/// `ev_charger`: an EV charger (Matter: EnergyEVSE). The charger's own
+/// limits (e.g. its contracted-power control) always prevail; VESTA never
+/// replaces them (AGENTS.md rule 7).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
 pub struct EvChargerCapability {
@@ -388,49 +411,158 @@ pub struct EvChargerCapability {
     pub state: Option<EvChargerState>,
 }
 
+impl EvChargerCapability {
+    /// The range `set_current` accepts right now: the limits configured on
+    /// the charger when it reports them, kept within the hardware range.
+    pub fn current_range(&self) -> (f64, f64) {
+        let features = &self.features;
+        let hw_min = features.min_current_a.min(features.max_current_a);
+        let hw_max = features.max_current_a.max(features.min_current_a);
+        let within = |value: Option<f64>, fallback: f64| {
+            value
+                .filter(|v| v.is_finite())
+                .map_or(fallback, |v| v.max(hw_min).min(hw_max))
+        };
+        let state = self.state.as_ref();
+        let min = within(state.and_then(|s| s.min_current_a), hw_min);
+        let max = within(state.and_then(|s| s.max_current_a), hw_max);
+        (min.min(max), max.max(min))
+    }
+
+    /// Clamps a requested current to [`Self::current_range`]. Never panics,
+    /// even on inconsistent limits; NaN becomes the minimum.
+    pub fn clamp_current(&self, amps: f64) -> f64 {
+        let (min, max) = self.current_range();
+        if amps.is_nan() {
+            min
+        } else {
+            amps.max(min).min(max)
+        }
+    }
+}
+
+/// What the charger can do. Every command needs its feature: a charger set
+/// up for monitoring only reports them all `false` and no modes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct EvChargerFeatures {
+    /// Charging current range of the hardware, in A. The limits configured
+    /// on the charger may be narrower (`state.min_current_a` /
+    /// `state.max_current_a`).
     pub min_current_a: f64,
     pub max_current_a: f64,
+    /// Modes `set_mode` can switch to. Empty: the mode cannot be changed
+    /// from VESTA (it may still be reported in `state.mode`).
     pub modes: Vec<EvChargeMode>,
+    /// `pause` and `resume` work.
+    pub pause: bool,
+    /// `set_current` works.
+    pub adjustable_current: bool,
+    /// `lock` and `unlock` work. A locked charger does not charge until it
+    /// is unlocked; unlocking is sensitive.
+    pub lock: bool,
+    /// `set_schedule` works: the charger's own schedule can be switched on
+    /// and off. Its hours are set on the charger itself.
+    pub schedule: bool,
 }
 
 impl EvChargerFeatures {
-    /// Clamps a requested current to the charger's range. Never panics, even
+    /// Clamps a requested current to the hardware range. Never panics, even
     /// on inconsistent features or NaN.
     pub fn clamp_current(&self, amps: f64) -> f64 {
         amps.max(self.min_current_a).min(self.max_current_a)
     }
 }
 
+/// How the charger decides how much to charge (Matter: EnergyEVSEMode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum EvChargeMode {
-    /// Charge at the configured current.
+    /// Charge at the set current.
     Manual,
-    /// Follow surplus solar production.
+    /// Charge only with surplus solar power; wait while there is none.
     Solar,
-    /// Charge during scheduled hours (e.g. off-peak tariff).
+    /// Charge with surplus solar power, topped up from the grid so the car
+    /// always charges at least at the minimum current.
+    SolarGrid,
+    /// Charge during scheduled hours (e.g. off-peak tariff), for chargers
+    /// whose schedule is a mode. Chargers with a schedule that can be
+    /// switched on and off in any mode report `features.schedule` instead.
     Scheduled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
 pub struct EvChargerState {
     pub status: EvChargerStatus,
+    /// Why a plugged-in car is not charging. Only with status `waiting`,
+    /// and only when the charger makes it clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_for: Option<EvChargerWaitReason>,
+    /// Power going to the car, in W.
     pub power_w: f64,
+    /// Energy delivered in the current (or last) charging session, in Wh.
     pub session_energy_wh: f64,
+    /// Length of the current (or last) charging session, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_duration_s: Option<u64>,
+    /// The current the charger offers the car right now (its setpoint), in
+    /// A. The charger's own power control may lower it by itself.
     pub current_a: f64,
-    pub mode: EvChargeMode,
+    /// The charger's own power control is choosing the current by itself
+    /// (e.g. to stay within the contracted power): `set_current` has no
+    /// effect until it stops, so it is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_current: Option<bool>,
+    /// Measured current per phase, in A, L1 first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_current_a: Option<Vec<f64>>,
+    /// The range `set_current` accepts right now, as configured on the
+    /// charger (within `features`). Omitted when the charger does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_current_a: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_current_a: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<EvChargeMode>,
+    /// Locked: nobody can charge until it is unlocked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    /// The charger's own schedule is on: it charges only during the hours
+    /// set on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_enabled: Option<bool>,
 }
 
+/// Charger status (Matter: EnergyEVSE `State`, plus `SupplyState` for
+/// `paused`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum EvChargerStatus {
+    /// No car plugged in.
     Disconnected,
+    /// A car is plugged in and not charging, for no reason the charger
+    /// reports (e.g. the car is full or not asking for power).
     Connected,
     Charging,
+    /// Paused by someone (from VESTA, the charger's own app or button).
     Paused,
+    /// A car is plugged in and the charger holds back by itself; see
+    /// `waiting_for`.
+    Waiting,
     Error,
+}
+
+/// Why a charger with a car plugged in is waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum EvChargerWaitReason {
+    /// Outside the charger's schedule.
+    Schedule,
+    /// Not enough surplus solar power.
+    Solar,
+    /// The home is using a lot of power: the charger's own power control
+    /// holds the car back so the contracted power is not exceeded.
+    Power,
 }
 
 /// `battery`: charge in percent and a low-battery flag.
@@ -547,11 +679,15 @@ impl Capabilities {
                 LockCommand::Unlatch => cap.features.unlatch,
             }),
             Command::Trigger(_) => self.trigger.is_some(),
-            Command::EvCharger(cmd) => self.ev_charger.as_ref().is_some_and(|cap| match cmd {
-                EvChargerCommand::Pause
-                | EvChargerCommand::Resume
-                | EvChargerCommand::SetCurrent { .. } => true,
-                EvChargerCommand::SetMode { mode } => cap.features.modes.contains(mode),
+            Command::EvCharger(cmd) => self.ev_charger.as_ref().is_some_and(|cap| {
+                let features = &cap.features;
+                match cmd {
+                    EvChargerCommand::Pause | EvChargerCommand::Resume => features.pause,
+                    EvChargerCommand::SetCurrent { .. } => features.adjustable_current,
+                    EvChargerCommand::SetMode { mode } => features.modes.contains(mode),
+                    EvChargerCommand::Lock | EvChargerCommand::Unlock => features.lock,
+                    EvChargerCommand::SetSchedule { .. } => features.schedule,
+                }
             }),
         }
     }
@@ -773,16 +909,114 @@ mod tests {
         assert!(caps.level.is_none());
     }
 
-    #[test]
-    fn clamp_current_never_exceeds_max() {
-        let features = EvChargerFeatures {
+    fn charger_features() -> EvChargerFeatures {
+        EvChargerFeatures {
             min_current_a: 6.0,
             max_current_a: 16.0,
             modes: vec![EvChargeMode::Manual],
-        };
+            pause: true,
+            adjustable_current: true,
+            lock: false,
+            schedule: false,
+        }
+    }
+
+    fn charger_state(min: Option<f64>, max: Option<f64>) -> EvChargerState {
+        EvChargerState {
+            status: EvChargerStatus::Charging,
+            waiting_for: None,
+            power_w: 3680.0,
+            session_energy_wh: 1200.0,
+            session_duration_s: None,
+            current_a: 16.0,
+            auto_current: None,
+            phase_current_a: None,
+            min_current_a: min,
+            max_current_a: max,
+            mode: None,
+            locked: None,
+            schedule_enabled: None,
+        }
+    }
+
+    #[test]
+    fn clamp_current_never_exceeds_max() {
+        let features = charger_features();
         assert_eq!(features.clamp_current(32.0), 16.0);
         assert_eq!(features.clamp_current(2.0), 6.0);
         assert_eq!(features.clamp_current(10.5), 10.5);
         assert_eq!(features.clamp_current(f64::NAN), 6.0);
+    }
+
+    #[test]
+    fn current_range_uses_the_chargers_own_limits_within_the_hardware() {
+        let mut cap = EvChargerCapability {
+            features: charger_features(),
+            state: None,
+        };
+        assert_eq!(cap.current_range(), (6.0, 16.0));
+
+        cap.state = Some(charger_state(Some(8.0), Some(13.0)));
+        assert_eq!(cap.current_range(), (8.0, 13.0));
+        assert_eq!(cap.clamp_current(20.0), 13.0);
+        assert_eq!(cap.clamp_current(1.0), 8.0);
+        assert_eq!(cap.clamp_current(f64::NAN), 8.0);
+        assert_eq!(cap.clamp_current(f64::INFINITY), 13.0);
+
+        // Limits outside the hardware range, swapped or not numbers never
+        // widen it.
+        cap.state = Some(charger_state(Some(2.0), Some(40.0)));
+        assert_eq!(cap.current_range(), (6.0, 16.0));
+        cap.state = Some(charger_state(Some(14.0), Some(10.0)));
+        assert_eq!(cap.current_range(), (10.0, 14.0));
+        cap.state = Some(charger_state(Some(f64::NAN), Some(f64::NEG_INFINITY)));
+        assert_eq!(cap.current_range(), (6.0, 16.0));
+    }
+
+    #[test]
+    fn charger_commands_need_their_feature() {
+        let mut features = charger_features();
+        let caps = |features: &EvChargerFeatures| Capabilities {
+            ev_charger: Some(EvChargerCapability {
+                features: features.clone(),
+                state: None,
+            }),
+            ..Capabilities::default()
+        };
+        let ev = |cmd| Command::EvCharger(cmd);
+        let all = [
+            ev(EvChargerCommand::Pause),
+            ev(EvChargerCommand::Resume),
+            ev(EvChargerCommand::SetCurrent { amps: 10.0 }),
+            ev(EvChargerCommand::SetMode {
+                mode: EvChargeMode::Manual,
+            }),
+            ev(EvChargerCommand::Lock),
+            ev(EvChargerCommand::Unlock),
+            ev(EvChargerCommand::SetSchedule { enabled: true }),
+        ];
+        let supported: Vec<bool> = all
+            .iter()
+            .map(|cmd| caps(&features).supports(cmd))
+            .collect();
+        assert_eq!(supported, [true, true, true, true, false, false, false]);
+        assert!(!caps(&features).supports(&ev(EvChargerCommand::SetMode {
+            mode: EvChargeMode::Solar
+        })));
+
+        features.lock = true;
+        features.schedule = true;
+        assert!(all.iter().all(|cmd| caps(&features).supports(cmd)));
+
+        // Monitoring only: nothing can be sent.
+        let read_only = EvChargerFeatures {
+            modes: Vec::new(),
+            pause: false,
+            adjustable_current: false,
+            lock: false,
+            schedule: false,
+            ..charger_features()
+        };
+        assert!(all.iter().all(|cmd| !caps(&read_only).supports(cmd)));
     }
 }
