@@ -2,10 +2,13 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { EvChargeMode, EvChargerStatus, EvChargerWaitReason } from '@/api/generated'
+import { CommandButton } from '@/components/CommandButton'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { useElementWidth } from '@/lib/use-element-width'
 import { cn } from '@/lib/utils'
 import { ChargerControls, type CurrentRange } from '@/widgets/ev-charger/ChargerControls'
@@ -59,14 +62,17 @@ export interface EvChargerProps extends WidgetStatusProps {
   scheduleEnabled?: boolean
   /** The home's meters around the charger (the car's power comes from `powerW`). */
   readings?: EnergyReadings
-  /** Present only when the charger can pause and resume. */
-  onPause?: () => void
-  onResume?: () => void
-  onCurrentChange?: (amps: number) => void
-  onModeChange?: (mode: EvChargeMode) => void
+  /**
+   * Present only when the charger can pause and resume. Command callbacks:
+   * a promise they return keeps the control busy.
+   */
+  onPause?: CommandHandler
+  onResume?: CommandHandler
+  onCurrentChange?: CommandHandler<[number]>
+  onModeChange?: CommandHandler<[EvChargeMode]>
   /** Called after the person confirmed unlocking. */
-  onLockChange?: (locked: boolean) => void
-  onScheduleChange?: (enabled: boolean) => void
+  onLockChange?: CommandHandler<[boolean]>
+  onScheduleChange?: CommandHandler<[boolean]>
 }
 
 function Readout({ watts, size = 'lg' }: { watts: number | undefined; size?: 'lg' | 'xl' }) {
@@ -283,19 +289,24 @@ export function EvCharger(props: EvChargerProps) {
 
   const paused = status === 'paused'
   const primary = paused ? onResume : onPause
-  const primaryAction =
-    primary === undefined || glance ? null : (
-      <Button
-        variant={paused ? 'default' : 'secondary'}
-        className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
-        disabled={unavailable || status === undefined}
-        aria-label={paused ? t('ev.resumeLabel', { name: label }) : t('ev.pauseLabel', { name: label })}
-        onClick={primary}
-      >
-        <Icon name={paused ? 'resume' : 'pause'} className="size-5" />
-        {paused ? t('ev.resume') : t('ev.pause')}
-      </Button>
-    )
+  // One gate for pause and resume (the same button), on the tile and in the dialog.
+  const pauseResume = useCommand(primary)
+  const primaryButton = (
+    <CommandButton
+      variant={paused ? 'default' : 'secondary'}
+      className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
+      disabled={unavailable || status === undefined}
+      busy={pauseResume.busy}
+      icon={paused ? 'resume' : 'pause'}
+      aria-label={paused ? t('ev.resumeLabel', { name: label }) : t('ev.pauseLabel', { name: label })}
+      onClick={() => {
+        pauseResume.run()
+      }}
+    >
+      {paused ? t('ev.resume') : t('ev.pause')}
+    </CommandButton>
+  )
+  const primaryAction = primary === undefined || glance ? null : primaryButton
   const more = !withDialog ? null : (
     <Button
       variant="ghost"
@@ -377,18 +388,7 @@ export function EvCharger(props: EvChargerProps) {
                 <DialogTitle className="text-2xl">{label}</DialogTitle>
                 <DialogDescription className="text-base">{key === null ? '' : t(key, { power })}</DialogDescription>
               </span>
-              {primaryAction ??
-                (primary === undefined ? null : (
-                  <Button
-                    variant={paused ? 'default' : 'secondary'}
-                    className="h-auto min-h-14 shrink-0 gap-2 px-4 text-base"
-                    disabled={unavailable || status === undefined}
-                    onClick={primary}
-                  >
-                    <Icon name={paused ? 'resume' : 'pause'} className="size-5" />
-                    {paused ? t('ev.resume') : t('ev.pause')}
-                  </Button>
-                ))}
+              {primary === undefined ? null : primaryButton}
             </DialogHeader>
             <ChargerDetails {...props} />
           </DialogContent>

@@ -25,7 +25,11 @@ export interface WidgetFrameProps extends WidgetStatusProps {
   children?: ReactNode
 }
 
-/** Common tile chrome: icon, name, state line, pending and unavailable states. */
+/**
+ * Common tile chrome: icon, name, state line, pending and unavailable
+ * states. While a command waits for the device the tile gets a ring and
+ * `aria-busy`; the control that sent it shows its own spinner.
+ */
 export function WidgetFrame({
   icon,
   title,
@@ -63,12 +67,6 @@ export function WidgetFrame({
         <span className="line-clamp-2 text-lg leading-tight font-medium break-words">{title}</span>
         {status != null && <span className="truncate text-sm text-muted-foreground">{status}</span>}
       </span>
-      {pending && (
-        <span className="shrink-0 text-muted-foreground">
-          <Icon name="loading" className="size-5 motion-safe:animate-spin" />
-          <span className="sr-only">{t('widget.pending')}</span>
-        </span>
-      )}
       {headerAction}
     </>
   )

@@ -81,11 +81,27 @@ export type ServerMessageListener = (message: ServerMessage) => void
 interface InFlight {
   readonly target: Target
   readonly command: Command
+  readonly confirmed: boolean
   readonly label: string | undefined
+  readonly outcome: Promise<CommandOutcome>
   readonly resolve: (outcome: CommandOutcome) => void
   timer: ReturnType<typeof setTimeout> | null
   /** The home's `command_result` arrived (the promise is settled). */
   answered: boolean
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const keysA = Object.keys(a)
+  const keysB = Object.keys(b)
+  return (
+    keysA.length === keysB.length &&
+    keysA.every(
+      (key) => Object.hasOwn(b, key) && sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+    )
+  )
 }
 
 function randomToken(): string {
@@ -180,6 +196,10 @@ export class LiveClient {
     if (!data.synced || this.socket.snapshot.status !== 'open') {
       return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
     }
+    // The same command is already on its way (e.g. the same button on the
+    // tile and in its dialog): never send it twice, share its outcome.
+    const twin = this.#twin(target, command, confirmed)
+    if (twin !== undefined) return twin.outcome
 
     const requestId = this.#newRequestId()
     const { predicted, confirmsWith } = predict(command, selectEndpointView(data, target)?.endpoint)
@@ -201,13 +221,26 @@ export class LiveClient {
       return Promise.resolve(this.#fail({ target, command, label, reason: 'not_connected' }))
     }
 
-    return new Promise<CommandOutcome>((resolve) => {
-      const entry: InFlight = { target, command, label, resolve, timer: null, answered: false }
-      entry.timer = setTimeout(() => {
-        this.#onTimeout(requestId)
-      }, this.#timeoutMs)
-      this.#inFlight.set(requestId, entry)
+    let resolve: (outcome: CommandOutcome) => void = () => undefined
+    const outcome = new Promise<CommandOutcome>((settle) => {
+      resolve = settle
     })
+    const entry: InFlight = { target, command, confirmed, label, outcome, resolve, timer: null, answered: false }
+    entry.timer = setTimeout(() => {
+      this.#onTimeout(requestId)
+    }, this.#timeoutMs)
+    this.#inFlight.set(requestId, entry)
+    return outcome
+  }
+
+  /** An identical command still waiting for the home's answer. */
+  #twin(target: Target, command: Command, confirmed: boolean): InFlight | undefined {
+    for (const entry of this.#inFlight.values()) {
+      if (!entry.answered && entry.target === target && entry.confirmed === confirmed && sameValue(entry.command, command)) {
+        return entry
+      }
+    }
+    return undefined
   }
 
   #update(reducer: (data: DeviceData) => DeviceData): void {

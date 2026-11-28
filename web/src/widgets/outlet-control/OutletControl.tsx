@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Icon } from '@/components/Icon'
 import { Switch } from '@/components/ui/switch'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { cn } from '@/lib/utils'
 import {
   currentReading,
@@ -26,8 +28,9 @@ export interface OutletControlProps extends WidgetStatusProps {
   /**
    * Present when the plug can be switched from here. Absent (a plug that
    * is only watched): the tile shows whether it is on, without a switch.
+   * A promise it returns keeps the switch busy.
    */
-  onToggle?: (on: boolean) => void
+  onToggle?: CommandHandler<[boolean]>
   /** What it draws right now, W. */
   powerW?: number
   /** Lifetime energy, Wh (only plugs that count it). */
@@ -55,6 +58,7 @@ export function OutletControl({
 }: OutletControlProps) {
   const { t, i18n } = useTranslation()
   const switchId = useId()
+  const toggle = useCommand(onToggle)
   const language = i18n.language
   const isOn = on === true
   const drawing = isOn && powerW !== undefined && powerW >= IDLE_POWER_W
@@ -75,8 +79,9 @@ export function OutletControl({
         size="lg"
         checked={isOn}
         disabled={unavailable || on === undefined}
+        busy={toggle.busy}
         aria-label={isOn ? t('widget.turnOff', { name: label }) : t('widget.turnOn', { name: label })}
-        onCheckedChange={onToggle}
+        onCheckedChange={toggle.run}
       />
     )
 

@@ -46,7 +46,7 @@ function demoSpec(
   charger: DemoCharger,
   appliances: DemoAppliances,
   rows: number,
-  run: (name: string, command: Promise<boolean>) => void,
+  run: (name: string, command: Promise<boolean>) => Promise<boolean>,
   onDoorOpened: (name: string) => void,
 ): WidgetSpec {
   switch (thing.kind) {
@@ -62,17 +62,13 @@ function demoSpec(
           colorTemperature: state.colorTemperature,
           pending: state.pending,
           unavailable: state.unavailable,
-          onToggle: (on) => {
-            run(label, demo.setLight(id, { on }))
-          },
-          onBrightnessChange: (brightness) => {
-            // Dimming a light that is off switches it on.
-            run(label, demo.setLight(id, { brightness, on: true }))
-          },
+          onToggle: (on) => run(label, demo.setLight(id, { on })),
+          // Dimming a light that is off switches it on.
+          onBrightnessChange: (brightness) => run(label, demo.setLight(id, { brightness, on: true })),
           onColorTemperatureChange: (kelvin) => {
             const current = state.colorTemperature
-            if (current === undefined) return
-            run(label, demo.setLight(id, { colorTemperature: { ...current, kelvin }, on: true }))
+            if (current === undefined) return undefined
+            return run(label, demo.setLight(id, { colorTemperature: { ...current, kelvin }, on: true }))
           },
         },
       }
@@ -89,15 +85,9 @@ function demoSpec(
           speedSteps: fan.speedSteps,
           direction: fan.direction,
           pending: fan.pending,
-          onToggle: (on) => {
-            run(label, demo.setFan(id, { on }))
-          },
-          onSpeedChange: (speed) => {
-            run(label, demo.setFan(id, { speed, on: true }))
-          },
-          onDirectionChange: (direction) => {
-            run(label, demo.setFan(id, { direction }))
-          },
+          onToggle: (on) => run(label, demo.setFan(id, { on })),
+          onSpeedChange: (speed) => run(label, demo.setFan(id, { speed, on: true })),
+          onDirectionChange: (direction) => run(label, demo.setFan(id, { direction })),
         },
       }
     }
@@ -139,11 +129,11 @@ function demoSpec(
         props: {
           label,
           pending: demo.doors[id].pending,
-          onOpen: () => {
-            void demo.openDoor(id).then((ok) => {
+          onOpen: () =>
+            demo.openDoor(id).then((ok) => {
               if (ok) onDoorOpened(label)
-            })
-          },
+              return ok
+            }),
         },
       }
     }
@@ -170,24 +160,12 @@ function demoSpec(
           locked: charger.locked,
           scheduleEnabled: charger.scheduleEnabled,
           readings: charger.readings,
-          onPause: () => {
-            run(label, changeDemoCharger({ paused: true }))
-          },
-          onResume: () => {
-            run(label, changeDemoCharger({ paused: false }))
-          },
-          onCurrentChange: (amps) => {
-            run(label, changeDemoCharger({ currentA: amps }))
-          },
-          onModeChange: (mode) => {
-            run(label, changeDemoCharger({ mode }))
-          },
-          onLockChange: (locked) => {
-            run(label, changeDemoCharger({ locked }))
-          },
-          onScheduleChange: (enabled) => {
-            run(label, changeDemoCharger({ scheduleEnabled: enabled }))
-          },
+          onPause: () => run(label, changeDemoCharger({ paused: true })),
+          onResume: () => run(label, changeDemoCharger({ paused: false })),
+          onCurrentChange: (amps) => run(label, changeDemoCharger({ currentA: amps })),
+          onModeChange: (mode) => run(label, changeDemoCharger({ mode })),
+          onLockChange: (locked) => run(label, changeDemoCharger({ locked })),
+          onScheduleChange: (enabled) => run(label, changeDemoCharger({ scheduleEnabled: enabled })),
         },
       }
     case 'plug': {
@@ -204,9 +182,7 @@ function demoSpec(
           currentA: plugCurrentA(plug),
           onToggle: plug.watchOnly
             ? undefined
-            : (on) => {
-                run(label, switchDemoPlug(thing.id, on))
-              },
+            : (on) => run(label, switchDemoPlug(thing.id, on)),
         },
       }
     }
@@ -222,15 +198,9 @@ function demoSpec(
           batteryLow: robot.batteryPercent <= 20,
           cleanedAreaM2: robot.cleanedAreaM2,
           cleaningDurationS: robot.cleaningDurationS,
-          onStart: () => {
-            run(label, commandDemoRobot('start'))
-          },
-          onPause: () => {
-            run(label, commandDemoRobot('pause'))
-          },
-          onReturnToDock: () => {
-            run(label, commandDemoRobot('dock'))
-          },
+          onStart: () => run(label, commandDemoRobot('start')),
+          onPause: () => run(label, commandDemoRobot('pause')),
+          onReturnToDock: () => run(label, commandDemoRobot('dock')),
         },
       }
     }
@@ -262,11 +232,11 @@ function DemoWidget({ widget }: { widget: Widget }) {
     charger,
     appliances,
     widget.row_span,
-    (name, command) => {
-      void command.then((ok) => {
+    (name, command) =>
+      command.then((ok) => {
         if (!ok) toast.error(t('widget.commandFailed', { name }))
-      })
-    },
+        return ok
+      }),
     (name) => {
       toast.success(t('door.opened', { name }))
     },

@@ -84,9 +84,11 @@ function bindKnown(
   const capabilities = view?.endpoint.capabilities
   const status = { pending: view?.pending ?? false, unavailable: view?.available !== true }
   const target = view?.target
-  const run = (command: Command, confirmed = false) => {
-    if (target === undefined) return
-    void ctx.send(target, command, { label, confirmed })
+  // Callbacks hand the outcome back, so the control that sent it is busy
+  // until the home answered (see `useCommand`).
+  const run = (command: Command, confirmed = false): Promise<CommandOutcome> | undefined => {
+    if (target === undefined) return undefined
+    return ctx.send(target, command, { label, confirmed })
   }
 
   switch (type) {
@@ -102,16 +104,12 @@ function bindKnown(
           label,
           icon: iconFor(widget, view),
           on: onOff?.state?.on ?? false,
-          onToggle: (on) => {
-            run({ capability: 'on_off', action: on ? 'on' : 'off' })
-          },
+          onToggle: (on) => run({ capability: 'on_off', action: on ? 'on' : 'off' }),
           brightness: level?.state?.level,
           onBrightnessChange:
             level === undefined
               ? undefined
-              : (value) => {
-                  run({ capability: 'level', action: 'set', level: value })
-                },
+              : (value) => run({ capability: 'level', action: 'set', level: value }),
           colorTemperature:
             colorTemperature?.state === undefined
               ? undefined
@@ -123,9 +121,7 @@ function bindKnown(
           onColorTemperatureChange:
             colorTemperature === undefined
               ? undefined
-              : (kelvin) => {
-                  run({ capability: 'color_temperature', action: 'set', kelvin })
-                },
+              : (kelvin) => run({ capability: 'color_temperature', action: 'set', kelvin }),
         },
       }
     }
@@ -144,9 +140,7 @@ function bindKnown(
           icon: iconFor(widget, view),
           on: onOff?.state?.on,
           onToggle: switchable
-            ? (on) => {
-                run({ capability: 'on_off', action: on ? 'on' : 'off' })
-              }
+            ? (on) => run({ capability: 'on_off', action: on ? 'on' : 'off' })
             : undefined,
           powerW: meter?.power_w,
           energyWh: meter?.energy_wh,
@@ -174,21 +168,15 @@ function bindKnown(
           cleaningDurationS: robot?.state?.cleaning_duration_s,
           onStart:
             features?.start === true
-              ? () => {
-                  run({ capability: 'robot_vacuum', action: 'start' })
-                }
+              ? () => run({ capability: 'robot_vacuum', action: 'start' })
               : undefined,
           onPause:
             features?.pause === true
-              ? () => {
-                  run({ capability: 'robot_vacuum', action: 'pause' })
-                }
+              ? () => run({ capability: 'robot_vacuum', action: 'pause' })
               : undefined,
           onReturnToDock:
             features?.return_to_dock === true
-              ? () => {
-                  run({ capability: 'robot_vacuum', action: 'return_to_dock' })
-                }
+              ? () => run({ capability: 'robot_vacuum', action: 'return_to_dock' })
               : undefined,
         },
       }
@@ -206,19 +194,13 @@ function bindKnown(
           label,
           icon: iconFor(widget, view),
           on: onOff?.state?.on ?? false,
-          onToggle: (on) => {
-            run({ capability: 'on_off', action: on ? 'on' : 'off' })
-          },
+          onToggle: (on) => run({ capability: 'on_off', action: on ? 'on' : 'off' }),
           speed: fan?.state?.speed ?? 1,
           speedSteps: fan?.features.speed_steps ?? 1,
-          onSpeedChange: (speed) => {
-            run({ capability: 'fan', action: 'set_speed', speed })
-          },
+          onSpeedChange: (speed) => run({ capability: 'fan', action: 'set_speed', speed }),
           direction: reversible ? (fan.state?.direction ?? 'forward') : undefined,
           onDirectionChange: reversible
-            ? (direction) => {
-                run({ capability: 'fan', action: 'set_direction', direction })
-              }
+            ? (direction) => run({ capability: 'fan', action: 'set_direction', direction })
             : undefined,
         },
       }
@@ -241,22 +223,14 @@ function bindKnown(
           isOpen: cover?.state?.open,
           motion: cover?.state?.motion,
           canStop,
-          onOpen: () => {
-            run({ capability: 'cover', action: 'open' }, sensitive)
-          },
-          onClose: () => {
-            run({ capability: 'cover', action: 'close' })
-          },
+          onOpen: () => run({ capability: 'cover', action: 'open' }, sensitive),
+          onClose: () => run({ capability: 'cover', action: 'close' }),
           onStop: canStop
-            ? () => {
-                run({ capability: 'cover', action: 'stop' })
-              }
+            ? () => run({ capability: 'cover', action: 'stop' })
             : undefined,
           onPositionChange:
             cover?.features.position === true
-              ? (position) => {
-                  run({ capability: 'cover', action: 'set_position', position }, sensitive)
-                }
+              ? (position) => run({ capability: 'cover', action: 'set_position', position }, sensitive)
               : undefined,
         },
       }
@@ -273,9 +247,10 @@ function bindKnown(
           icon: iconFor(widget, view, view?.endpoint.type === 'gate' ? 'gate' : undefined),
           onOpen: () => {
             // DoorButton only calls this after the person confirmed.
-            if (target === undefined || command === null) return
-            void ctx.send(target, command, { label, confirmed: true }).then((outcome) => {
+            if (target === undefined || command === null) return undefined
+            return ctx.send(target, command, { label, confirmed: true }).then((outcome) => {
               if (outcome.ok) ctx.onOpened?.(label)
+              return outcome
             })
           },
         },
@@ -300,9 +275,7 @@ function bindKnown(
       const charger = capabilities?.ev_charger
       const state = charger?.state
       const features = charger?.features
-      const send = (command: Command, confirmed = false) => {
-        run(command, confirmed)
-      }
+      const send = run
       const modes = features?.modes ?? []
       return {
         type,
@@ -328,40 +301,28 @@ function bindKnown(
           readings: meterReadings(related),
           onPause:
             features?.pause === true
-              ? () => {
-                  send({ capability: 'ev_charger', action: 'pause' })
-                }
+              ? () => send({ capability: 'ev_charger', action: 'pause' })
               : undefined,
           onResume:
             features?.pause === true
-              ? () => {
-                  send({ capability: 'ev_charger', action: 'resume' })
-                }
+              ? () => send({ capability: 'ev_charger', action: 'resume' })
               : undefined,
           onCurrentChange:
             features?.adjustable_current === true
-              ? (amps) => {
-                  send({ capability: 'ev_charger', action: 'set_current', amps })
-                }
+              ? (amps) => send({ capability: 'ev_charger', action: 'set_current', amps })
               : undefined,
           onModeChange:
             modes.length > 0
-              ? (mode) => {
-                  send({ capability: 'ev_charger', action: 'set_mode', mode })
-                }
+              ? (mode) => send({ capability: 'ev_charger', action: 'set_mode', mode })
               : undefined,
           // The widget asks before unlocking; only then is it sent as confirmed.
           onLockChange:
             features?.lock === true
-              ? (locked) => {
-                  send({ capability: 'ev_charger', action: locked ? 'lock' : 'unlock' }, !locked)
-                }
+              ? (locked) => send({ capability: 'ev_charger', action: locked ? 'lock' : 'unlock' }, !locked)
               : undefined,
           onScheduleChange:
             features?.schedule === true
-              ? (enabled) => {
-                  send({ capability: 'ev_charger', action: 'set_schedule', enabled })
-                }
+              ? (enabled) => send({ capability: 'ev_charger', action: 'set_schedule', enabled })
               : undefined,
         },
       }

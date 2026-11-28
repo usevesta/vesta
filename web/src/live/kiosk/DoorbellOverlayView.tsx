@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import type { DoorbellOverlay } from '@/api/generated'
+import { CommandButton } from '@/components/CommandButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
@@ -39,9 +40,10 @@ export function DoorbellOverlayView({ overlay }: DoorbellOverlayViewProps) {
   const command = door === undefined ? null : openCommand(door.endpoint)
   const doorName = door?.endpoint.name ?? t('widget.unknownDevice')
 
+  // The confirmation stays open (busy) until the door answered.
   const openDoor = () => {
-    if (door === undefined || command === null) return
-    void liveClient()
+    if (door === undefined || command === null) return undefined
+    return liveClient()
       .sendCommand(door.target, command, { label: doorName, confirmed: true })
       .then((outcome) => {
         if (!outcome.ok) return
@@ -82,19 +84,18 @@ export function DoorbellOverlayView({ overlay }: DoorbellOverlayViewProps) {
             {t('doorbell.dismiss')}
           </Button>
           {command !== null && (
-            <Button
+            <CommandButton
               className="h-auto min-h-16 flex-1 gap-3 text-xl"
-              disabled={door?.available !== true || door.pending}
+              disabled={door?.available !== true}
+              busy={door?.pending === true}
+              icon="door_open"
+              iconClassName="size-6"
               onClick={() => {
                 setConfirming(true)
               }}
             >
-              <Icon
-                name={door?.pending === true ? 'loading' : 'door_open'}
-                className={door?.pending === true ? 'size-6 motion-safe:animate-spin' : 'size-6'}
-              />
               {door?.pending === true ? t('door.opening') : t('doorbell.open')}
-            </Button>
+            </CommandButton>
           )}
         </div>
         {ringingUntil !== null && (

@@ -2,11 +2,13 @@ import { useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { EvChargeMode } from '@/api/generated'
+import { CommandButton } from '@/components/CommandButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Icon } from '@/components/Icon'
-import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
+import { useCommand } from '@/lib/use-command'
 import { cn } from '@/lib/utils'
 import { formatAmps } from '@/widgets/ev-charger/energy'
 import { LabeledSlider } from '@/widgets/parts/LabeledSlider'
@@ -23,16 +25,17 @@ export interface ChargerControlsProps {
   currentRange?: CurrentRange
   /** The charger sets the current by itself right now (its own power control). */
   autoCurrent?: boolean
-  onCurrentChange?: (amps: number) => void
+  /** Command callbacks: a promise they return keeps the control busy. */
+  onCurrentChange?: CommandHandler<[number]>
   mode?: EvChargeMode
   /** Modes that can be picked here. */
   modes: readonly EvChargeMode[]
-  onModeChange?: (mode: EvChargeMode) => void
+  onModeChange?: CommandHandler<[EvChargeMode]>
   locked?: boolean
   /** Unlocking is confirmed first; the callback runs after that. */
-  onLockChange?: (locked: boolean) => void
+  onLockChange?: CommandHandler<[boolean]>
   scheduleEnabled?: boolean
-  onScheduleChange?: (enabled: boolean) => void
+  onScheduleChange?: CommandHandler<[boolean]>
 }
 
 function SettingRow({
@@ -94,6 +97,9 @@ export function ChargerControls({
   const lockId = useId()
   const scheduleId = useId()
   const [confirmUnlock, setConfirmUnlock] = useState(false)
+  const setMode = useCommand(onModeChange)
+  const lock = useCommand(onLockChange)
+  const schedule = useCommand(onScheduleChange)
   const amps = (value: number) => t('ev.amps', { value: formatAmps(value, i18n.language) })
 
   const canSetCurrent = onCurrentChange !== undefined && currentRange !== undefined && !autoCurrent
@@ -137,21 +143,23 @@ export function ChargerControls({
             {modes.map((option) => {
               const selected = option === mode
               return (
-                <Button
+                <CommandButton
                   key={option}
                   variant={selected ? 'default' : 'secondary'}
                   aria-pressed={selected}
-                  disabled={disabled}
-                  className="h-auto min-h-16 flex-col items-start justify-center gap-0.5 px-3 py-2 text-left whitespace-normal"
+                  // One mode at a time: the others wait for this one.
+                  disabled={disabled || setMode.busy}
+                  busy={setMode.busyWith?.[0] === option}
+                  className="h-auto min-h-16 flex-col items-start justify-center gap-0.5 px-3 py-2 pr-7 text-left whitespace-normal"
                   onClick={() => {
-                    if (!selected) onModeChange(option)
+                    if (!selected) setMode.run(option)
                   }}
                 >
                   <span className="text-base leading-tight font-medium">{t(`ev.modes.${option}`)}</span>
                   <span className={cn('text-xs leading-snug', selected ? 'opacity-80' : 'text-muted-foreground')}>
                     {t(`ev.modeHints.${option}`)}
                   </span>
-                </Button>
+                </CommandButton>
               )
             })}
           </div>
@@ -184,9 +192,10 @@ export function ChargerControls({
                     size="lg"
                     checked={locked}
                     disabled={disabled}
+                    busy={lock.busy}
                     aria-label={t('ev.lock')}
                     onCheckedChange={(next) => {
-                      if (next) onLockChange(true)
+                      if (next) lock.run(true)
                       else setConfirmUnlock(true)
                     }}
                   />
@@ -209,8 +218,9 @@ export function ChargerControls({
                     size="lg"
                     checked={scheduleEnabled}
                     disabled={disabled}
+                    busy={schedule.busy}
                     aria-label={t('ev.schedule')}
-                    onCheckedChange={onScheduleChange}
+                    onCheckedChange={schedule.run}
                   />
                 )
               }
@@ -226,10 +236,8 @@ export function ChargerControls({
         title={t('ev.unlockTitle', { name: label })}
         description={t('ev.unlockBody')}
         confirmLabel={t('ev.unlock')}
-        onConfirm={() => {
-          setConfirmUnlock(false)
-          onLockChange?.(false)
-        }}
+        // The dialog stays open (busy) until the charger answered.
+        onConfirm={() => onLockChange?.(false)}
       />
     </div>
   )
