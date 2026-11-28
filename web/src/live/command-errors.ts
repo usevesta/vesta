@@ -9,9 +9,16 @@ export type CommandErrorKey =
   | 'commandError.confirmationRequired'
   | 'commandError.device'
   | 'commandError.notConnected'
+  | 'ev.hours.saveFailed'
 
 /** Plain-language message for why a command did not happen. */
-export function commandErrorKey(failure: Pick<CommandFailure, 'reason' | 'rejectReason'>): CommandErrorKey {
+export function commandErrorKey(
+  failure: Pick<CommandFailure, 'reason' | 'rejectReason'> & Partial<Pick<CommandFailure, 'command'>>,
+): CommandErrorKey {
+  // Saving a charger's hours goes through the internet: say so.
+  const savingHours =
+    failure.command?.capability === 'ev_charger' && failure.command.action === 'set_charging_schedule'
+  if (savingHours && ['device', 'timeout', 'no_response'].includes(failure.reason)) return 'ev.hours.saveFailed'
   switch (failure.reason) {
     case 'unsupported':
       return 'commandError.unsupported'

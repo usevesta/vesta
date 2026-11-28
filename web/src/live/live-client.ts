@@ -37,6 +37,16 @@ import {
 
 /** How long a command may stay unconfirmed before the screen reverts it. */
 export const COMMAND_TIMEOUT_MS = 5_000
+/**
+ * The same for slow commands (saving a charger's hours may go through the
+ * internet). Matches `SLOW_COMMAND_TIMEOUT` on the home (`Command::is_slow`).
+ */
+export const SLOW_COMMAND_TIMEOUT_MS = 20_000
+
+/** Commands the home gives longer (`Command::is_slow`). */
+export function isSlowCommand(command: Command): boolean {
+  return command.capability === 'ev_charger' && command.action === 'set_charging_schedule'
+}
 
 /**
  * Why a command did not happen: the home's error codes, plus two the
@@ -70,6 +80,7 @@ export interface LiveClientOptions extends Pick<
 > {
   store: DeviceStore
   commandTimeoutMs?: number
+  slowCommandTimeoutMs?: number
   /** Show a failure to the person (a translated toast in the app). */
   onCommandFailed?: (failure: CommandFailure) => void
   newRequestId?: () => string
@@ -123,6 +134,7 @@ export class LiveClient {
   readonly socket: ReconnectingSocket
   readonly #store: DeviceStore
   readonly #timeoutMs: number
+  readonly #slowTimeoutMs: number
   readonly #onCommandFailed: (failure: CommandFailure) => void
   readonly #newRequestId: () => string
   readonly #inFlight = new Map<string, InFlight>()
@@ -134,6 +146,7 @@ export class LiveClient {
     this.socket = new ReconnectingSocket(options)
     this.#store = options.store
     this.#timeoutMs = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS
+    this.#slowTimeoutMs = options.slowCommandTimeoutMs ?? SLOW_COMMAND_TIMEOUT_MS
     this.#onCommandFailed = options.onCommandFailed ?? (() => undefined)
     this.#newRequestId = options.newRequestId ?? requestIdGenerator()
   }
@@ -226,9 +239,12 @@ export class LiveClient {
       resolve = settle
     })
     const entry: InFlight = { target, command, confirmed, label, outcome, resolve, timer: null, answered: false }
-    entry.timer = setTimeout(() => {
-      this.#onTimeout(requestId)
-    }, this.#timeoutMs)
+    entry.timer = setTimeout(
+      () => {
+        this.#onTimeout(requestId)
+      },
+      isSlowCommand(command) ? this.#slowTimeoutMs : this.#timeoutMs,
+    )
     this.#inFlight.set(requestId, entry)
     return outcome
   }

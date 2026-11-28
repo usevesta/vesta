@@ -1,7 +1,13 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { EvChargeMode, EvChargerStatus, EvChargerWaitReason } from '@/api/generated'
+import type {
+  ChargingSchedule,
+  ChargingScheduleFeatures,
+  EvChargeMode,
+  EvChargerStatus,
+  EvChargerWaitReason,
+} from '@/api/generated'
 import { CommandButton } from '@/components/CommandButton'
 import { Icon } from '@/components/Icon'
 import { Button } from '@/components/ui/button'
@@ -61,6 +67,10 @@ export interface EvChargerProps extends WidgetStatusProps {
   modes?: readonly EvChargeMode[]
   locked?: boolean
   scheduleEnabled?: boolean
+  /** The charger's hours, when known. */
+  chargingSchedule?: ChargingSchedule
+  /** What the charger's hours allow (absent: they are set on the charger). */
+  scheduleFeatures?: ChargingScheduleFeatures
   /** The home's meters around the charger (the car's power comes from `powerW`). */
   readings?: EnergyReadings
   /**
@@ -74,6 +84,8 @@ export interface EvChargerProps extends WidgetStatusProps {
   /** Called after the person confirmed unlocking. */
   onLockChange?: CommandHandler<[boolean]>
   onScheduleChange?: CommandHandler<[boolean]>
+  /** Present when the hours can be changed from here. */
+  onChargingScheduleChange?: CommandHandler<[ChargingSchedule]>
 }
 
 function Readout({ watts, size = 'lg' }: { watts: number | undefined; size?: 'lg' | 'xl' }) {
@@ -248,6 +260,9 @@ function ChargerDetails({ settings = 'all', ...props }: EvChargerProps & { setti
                 onLockChange: props.onLockChange,
                 scheduleEnabled: props.scheduleEnabled,
                 onScheduleChange: props.onScheduleChange,
+                chargingSchedule: props.chargingSchedule,
+                scheduleFeatures: props.scheduleFeatures,
+                onChargingScheduleChange: props.onChargingScheduleChange,
               }
             : { modes: [] })}
         />

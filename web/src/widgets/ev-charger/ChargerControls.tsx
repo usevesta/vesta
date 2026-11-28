@@ -1,16 +1,18 @@
 import { useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { EvChargeMode } from '@/api/generated'
+import type { ChargingSchedule, ChargingScheduleFeatures, EvChargeMode } from '@/api/generated'
 import { CommandButton } from '@/components/CommandButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Icon } from '@/components/Icon'
+import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import type { CommandHandler } from '@/lib/command-gate'
 import type { IconName } from '@/lib/icons'
 import { useCommand } from '@/lib/use-command'
 import { cn } from '@/lib/utils'
 import { formatAmps } from '@/widgets/ev-charger/energy'
+import { ScheduleEditor, ScheduleSummary } from '@/widgets/ev-charger/ScheduleEditor'
 import { LabeledSlider } from '@/widgets/parts/LabeledSlider'
 
 export interface CurrentRange {
@@ -36,6 +38,12 @@ export interface ChargerControlsProps {
   onLockChange?: CommandHandler<[boolean]>
   scheduleEnabled?: boolean
   onScheduleChange?: CommandHandler<[boolean]>
+  /** The charger's hours, when known. */
+  chargingSchedule?: ChargingSchedule
+  /** What the charger's hours allow (absent: they are set on the charger). */
+  scheduleFeatures?: ChargingScheduleFeatures
+  /** Present when the hours can be changed from here. */
+  onChargingScheduleChange?: CommandHandler<[ChargingSchedule]>
 }
 
 function SettingRow({
@@ -47,7 +55,7 @@ function SettingRow({
 }: {
   icon: IconName
   title: string
-  hint?: string
+  hint?: ReactNode
   control: ReactNode
   controlId?: string
 }) {
@@ -92,11 +100,15 @@ export function ChargerControls({
   onLockChange,
   scheduleEnabled,
   onScheduleChange,
+  chargingSchedule,
+  scheduleFeatures,
+  onChargingScheduleChange,
 }: ChargerControlsProps) {
   const { t, i18n } = useTranslation()
   const lockId = useId()
   const scheduleId = useId()
   const [confirmUnlock, setConfirmUnlock] = useState(false)
+  const [editingHours, setEditingHours] = useState(false)
   const setMode = useCommand(onModeChange)
   const lock = useCommand(onLockChange)
   const schedule = useCommand(onScheduleChange)
@@ -207,7 +219,7 @@ export function ChargerControls({
             <SettingRow
               icon="schedule"
               title={t('ev.schedule')}
-              hint={t('ev.scheduleHint')}
+              hint={scheduleFeatures === undefined ? t('ev.scheduleHint') : undefined}
               controlId={onScheduleChange === undefined ? undefined : scheduleId}
               control={
                 onScheduleChange === undefined ? (
@@ -226,7 +238,47 @@ export function ChargerControls({
               }
             />
           )}
+          {scheduleFeatures !== undefined && (
+            <div className="flex flex-col gap-2 pl-13" data-slot="charging-hours">
+              {chargingSchedule === undefined ? (
+                <p className="text-sm leading-snug text-muted-foreground">{t('ev.hours.unknown')}</p>
+              ) : (
+                <>
+                  <ScheduleSummary windows={chargingSchedule.windows} />
+                  {!scheduleFeatures.reports_windows && (
+                    <p className="text-sm leading-snug text-muted-foreground">{t('ev.hours.savedHere')}</p>
+                  )}
+                </>
+              )}
+              {scheduleFeatures.editable && onChargingScheduleChange !== undefined && (
+                <Button
+                  variant="outline"
+                  className="h-auto min-h-14 gap-2 self-start px-4 text-base"
+                  disabled={disabled}
+                  aria-label={t('ev.hours.changeLabel', { name: label })}
+                  onClick={() => {
+                    setEditingHours(true)
+                  }}
+                >
+                  <Icon name="edit" className="size-5" />
+                  {t('ev.hours.change')}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
+      )}
+
+      {scheduleFeatures?.editable === true && onChargingScheduleChange !== undefined && (
+        <ScheduleEditor
+          open={editingHours}
+          onOpenChange={setEditingHours}
+          label={label}
+          features={scheduleFeatures}
+          schedule={chargingSchedule}
+          enabled={scheduleEnabled ?? chargingSchedule?.enabled ?? false}
+          onSave={onChargingScheduleChange}
+        />
       )}
 
       <ConfirmDialog

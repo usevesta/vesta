@@ -298,6 +298,8 @@ function bindKnown(
           modes,
           locked: state?.locked,
           scheduleEnabled: state?.schedule_enabled,
+          chargingSchedule: state?.charging_schedule,
+          scheduleFeatures: features?.charging_schedule,
           readings: meterReadings(related),
           onPause:
             features?.pause === true
@@ -323,6 +325,11 @@ function bindKnown(
           onScheduleChange:
             features?.schedule === true
               ? (enabled) => send({ capability: 'ev_charger', action: 'set_schedule', enabled })
+              : undefined,
+          onChargingScheduleChange:
+            features?.charging_schedule?.editable === true
+              ? ({ enabled, windows }) =>
+                  send({ capability: 'ev_charger', action: 'set_charging_schedule', enabled, windows })
               : undefined,
         },
       }

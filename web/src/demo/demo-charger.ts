@@ -8,8 +8,16 @@
  */
 import { create } from 'zustand'
 
-import type { EvChargeMode, EvChargerStatus, EvChargerWaitReason } from '@/api/generated'
+import type {
+  ChargingSchedule,
+  ChargingScheduleFeatures,
+  ChargingWindow,
+  EvChargeMode,
+  EvChargerStatus,
+  EvChargerWaitReason,
+} from '@/api/generated'
 import type { EnergyReadings } from '@/widgets/ev-charger/energy'
+import { minutesOf, WEEK } from '@/widgets/ev-charger/schedule'
 
 export const DEMO_CHARGER_TICK_MS = 2_000
 const LATENCY_MS = 600
@@ -21,6 +29,18 @@ export const DEMO_CHARGER_MODES: readonly EvChargeMode[] = ['manual', 'solar', '
 export const DEMO_CURRENT_RANGE = { min: 6, max: 25 } as const
 const BATTERY_WH = 10_000
 const BATTERY_MAX_W = 2_500
+/** Saving hours goes "through the internet": slower than other settings. */
+const SAVE_HOURS_MS = 1_600
+
+/** Like a charger whose hours are saved through the internet and not reported. */
+export const DEMO_SCHEDULE_FEATURES: ChargingScheduleFeatures = {
+  max_windows: 2,
+  weekdays: true,
+  overnight: true,
+  editable: true,
+  reports_windows: false,
+  saving_needs_internet: true,
+}
 
 export interface DemoCharger {
   readonly status: EvChargerStatus
@@ -34,6 +54,10 @@ export interface DemoCharger {
   readonly locked: boolean
   readonly paused: boolean
   readonly scheduleEnabled: boolean
+  /** The hours it follows (23:00–07:00 every day until changed). */
+  readonly windows: readonly ChargingWindow[]
+  /** The hours as last saved from this screen (unknown until then). */
+  readonly chargingSchedule?: ChargingSchedule
   readonly readings: EnergyReadings
   readonly pending: boolean
 }
@@ -67,7 +91,25 @@ function houseAt(hour: number, elapsed: number): number {
   return load
 }
 
-type Settings = Pick<DemoCharger, 'mode' | 'locked' | 'paused' | 'scheduleEnabled' | 'currentA'>
+type Settings = Pick<DemoCharger, 'mode' | 'locked' | 'paused' | 'scheduleEnabled' | 'currentA' | 'windows'>
+
+/** Day of the week (the demo starts on a Monday) and minute of the day. */
+function dayAndMinute(elapsed: number): [number, number] {
+  const hours = START_HOUR + (elapsed / DAY_SECONDS) * 24
+  return [Math.floor(hours / 24) % 7, Math.floor((hours % 24) * 60)]
+}
+
+/** Within the charging hours; a window past midnight belongs to the day it starts. */
+function withinHours(windows: readonly ChargingWindow[], elapsed: number): boolean {
+  const [day, minute] = dayAndMinute(elapsed)
+  const on = (window: ChargingWindow, index: number) => window.days.includes(WEEK[index] ?? 'monday')
+  return windows.some((window) => {
+    const start = minutesOf(window.start) ?? 0
+    const end = minutesOf(window.end) ?? 0
+    if (start < end) return on(window, day) && minute >= start && minute < end
+    return (on(window, day) && minute >= start) || (on(window, (day + 6) % 7) && minute < end)
+  })
+}
 
 /** Everything the charger and the meters show after `dt` seconds. */
 function step(previous: DemoCharger, settings: Settings, dt: number): DemoCharger {
@@ -90,7 +132,7 @@ function step(previous: DemoCharger, settings: Settings, dt: number): DemoCharge
       : settings.mode === 'solar_grid'
         ? Math.min(Math.max(Math.floor(surplusA), DEMO_CURRENT_RANGE.min), settings.currentA)
         : settings.currentA
-  const inSchedule = hour >= 23 || hour < 7
+  const inSchedule = withinHours(settings.windows, sim.elapsed)
 
   let status: EvChargerStatus = 'charging'
   let waitingFor: EvChargerWaitReason | undefined
@@ -133,6 +175,7 @@ const INITIAL_SETTINGS: Settings = {
   paused: false,
   scheduleEnabled: false,
   currentA: 16,
+  windows: [{ start: '23:00', end: '07:00', days: [...WEEK] }],
 }
 
 export const useDemoCharger = create<DemoCharger>()(() =>
@@ -153,8 +196,8 @@ export const useDemoCharger = create<DemoCharger>()(() =>
 )
 
 function settingsOf(state: DemoCharger): Settings {
-  const { mode, locked, paused, scheduleEnabled, currentA } = state
-  return { mode, locked, paused, scheduleEnabled, currentA }
+  const { mode, locked, paused, scheduleEnabled, currentA, windows } = state
+  return { mode, locked, paused, scheduleEnabled, currentA, windows }
 }
 
 /** Runs the sample charger while the demo is on screen. Returns a stop function. */
@@ -182,6 +225,30 @@ export async function changeDemoCharger(patch: Partial<Settings>): Promise<boole
   if (settings.currentA !== state.currentA) {
     settings.currentA = Math.min(DEMO_CURRENT_RANGE.max, Math.max(DEMO_CURRENT_RANGE.min, Math.round(settings.currentA)))
   }
-  useDemoCharger.setState({ ...step(state, settings, 0), pending: sequence !== latest })
+  const next = step(state, settings, 0)
+  const known = state.chargingSchedule
+  useDemoCharger.setState({
+    ...next,
+    // The hours shown follow the on/off switch once they are known.
+    chargingSchedule: known === undefined ? undefined : { ...known, enabled: next.scheduleEnabled },
+    pending: sequence !== latest,
+  })
+  return true
+}
+
+/** Saves charging hours "through the internet": a little slower, then they show. */
+export async function saveDemoSchedule(schedule: ChargingSchedule): Promise<boolean> {
+  const sequence = ++latest
+  useDemoCharger.setState({ pending: true })
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, SAVE_HOURS_MS)
+  })
+  const state = useDemoCharger.getState()
+  const settings: Settings = { ...settingsOf(state), scheduleEnabled: schedule.enabled, windows: schedule.windows }
+  useDemoCharger.setState({
+    ...step(state, settings, 0),
+    chargingSchedule: schedule,
+    pending: sequence !== latest,
+  })
   return true
 }

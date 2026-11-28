@@ -142,6 +142,45 @@ describe('the simulated car charger, end to end', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'unsupported' })
   })
 
+  it('saves charging hours in the charger, and refuses hours that do not fit', async () => {
+    const features = store.getState().endpoints[CHARGER]?.capabilities.ev_charger?.features.charging_schedule
+    expect(features).toMatchObject({ max_windows: 2, weekdays: true, editable: true })
+    const windows = [
+      { start: '22:30', end: '06:00', days: ['friday', 'monday'] as const },
+      { start: '10:00', end: '14:00', days: ['saturday', 'sunday'] as const },
+    ].map((window) => ({ ...window, days: [...window.days] }))
+    await expect(
+      live().sendCommand(CHARGER, ev({ capability: 'ev_charger', action: 'set_charging_schedule', enabled: true, windows })),
+    ).resolves.toEqual({ ok: true })
+    await waitUntil(() => charger()?.charging_schedule?.windows[0]?.start === '22:30')
+    expect(charger()?.schedule_enabled).toBe(true)
+    // Days come back in week order.
+    expect(charger()?.charging_schedule).toEqual({
+      enabled: true,
+      windows: [
+        { start: '22:30', end: '06:00', days: ['monday', 'friday'] },
+        { start: '10:00', end: '14:00', days: ['saturday', 'sunday'] },
+      ],
+    })
+    await expect(
+      live().sendCommand(
+        CHARGER,
+        ev({ capability: 'ev_charger', action: 'set_charging_schedule', enabled: true, windows: [...windows, ...windows] }),
+      ),
+    ).resolves.toMatchObject({ ok: false, reason: 'unsupported' })
+    // Leave it the way the simulator starts.
+    await live().sendCommand(
+      CHARGER,
+      ev({
+        capability: 'ev_charger',
+        action: 'set_charging_schedule',
+        enabled: false,
+        windows: [{ start: '23:00', end: '07:00', days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] }],
+      }),
+    )
+    await waitUntil(() => charger()?.schedule_enabled === false)
+  })
+
   it('locks at once, but unlocks only when confirmed', async () => {
     await live().sendCommand(CHARGER, ev({ capability: 'ev_charger', action: 'lock' }))
     await waitUntil(() => charger()?.locked === true)

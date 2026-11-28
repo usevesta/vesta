@@ -28,6 +28,8 @@ import {
   changeDemoCharger,
   DEMO_CHARGER_MODES,
   DEMO_CURRENT_RANGE,
+  DEMO_SCHEDULE_FEATURES,
+  saveDemoSchedule,
   startDemoCharger,
   useDemoCharger,
   type DemoCharger,
@@ -159,6 +161,8 @@ function demoSpec(
           modes: DEMO_CHARGER_MODES,
           locked: charger.locked,
           scheduleEnabled: charger.scheduleEnabled,
+          chargingSchedule: charger.chargingSchedule,
+          scheduleFeatures: DEMO_SCHEDULE_FEATURES,
           readings: charger.readings,
           onPause: () => run(label, changeDemoCharger({ paused: true })),
           onResume: () => run(label, changeDemoCharger({ paused: false })),
@@ -166,6 +170,7 @@ function demoSpec(
           onModeChange: (mode) => run(label, changeDemoCharger({ mode })),
           onLockChange: (locked) => run(label, changeDemoCharger({ locked })),
           onScheduleChange: (enabled) => run(label, changeDemoCharger({ scheduleEnabled: enabled })),
+          onChargingScheduleChange: (schedule) => run(label, saveDemoSchedule(schedule)),
         },
       }
     case 'plug': {

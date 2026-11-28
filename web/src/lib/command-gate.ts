@@ -27,6 +27,15 @@ export function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   )
 }
 
+/**
+ * Whether a command's outcome says it worked: the live client's
+ * `{ ok: true }`, or `true` (the demo).
+ */
+export function isSuccess(outcome: unknown): boolean {
+  if (outcome === true) return true
+  return typeof outcome === 'object' && outcome !== null && 'ok' in outcome && outcome.ok === true
+}
+
 export class CommandGate<A extends readonly unknown[] = []> {
   readonly #maxBusyMs: number
   #inFlight: A | null = null

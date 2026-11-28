@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EndpointEvent } from '@/api/generated'
 import { commandErrorKey } from '@/live/command-errors'
 import { createDeviceStore, selectEndpointView } from '@/live/device-store'
-import { COMMAND_TIMEOUT_MS, createLiveClient, requestIdGenerator, type CommandFailure } from '@/live/live-client'
+import {
+  COMMAND_TIMEOUT_MS,
+  createLiveClient,
+  requestIdGenerator,
+  SLOW_COMMAND_TIMEOUT_MS,
+  type CommandFailure,
+} from '@/live/live-client'
 import { FakeSockets, NO_WAKE_SIGNALS, sampleSnapshot } from '@/live/test-fixtures'
 
 const FAN_LIGHT = 'living_room_fan/light'
@@ -116,6 +122,25 @@ describe('live client', () => {
     await expect(outcome).resolves.toMatchObject({ ok: false, reason: 'no_response' })
     expect(view()).toMatchObject({ pending: false, endpoint: { capabilities: { on_off: { state: { on: false } } } } })
     expect(failures.map(commandErrorKey)).toEqual(['widget.commandFailed'])
+  })
+
+  it('gives saving charging hours longer, and says what to check when it fails', async () => {
+    const { client, failures } = setup()
+    const save = client.sendCommand('car_charger/charger', {
+      capability: 'ev_charger',
+      action: 'set_charging_schedule',
+      enabled: true,
+      windows: [{ start: '22:00', end: '06:00', days: ['saturday'] }],
+    })
+    vi.advanceTimersByTime(COMMAND_TIMEOUT_MS)
+    expect(failures).toEqual([])
+    vi.advanceTimersByTime(SLOW_COMMAND_TIMEOUT_MS - COMMAND_TIMEOUT_MS)
+    await expect(save).resolves.toMatchObject({ ok: false, reason: 'no_response' })
+    expect(failures.map(commandErrorKey)).toEqual(['ev.hours.saveFailed'])
+    // Other reasons keep their own message.
+    expect(commandErrorKey({ reason: 'offline', command: { capability: 'ev_charger', action: 'pause' } })).toBe(
+      'commandError.offline',
+    )
   })
 
   it('counts a visible change as success even if the answer got lost', async () => {

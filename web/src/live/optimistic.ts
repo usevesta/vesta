@@ -69,6 +69,11 @@ function evChargerPrediction(command: Extract<Command, { capability: 'ev_charger
       return { locked: false }
     case 'set_schedule':
       return { schedule_enabled: command.enabled }
+    case 'set_charging_schedule':
+      return {
+        schedule_enabled: command.enabled,
+        charging_schedule: { enabled: command.enabled, windows: command.windows },
+      }
   }
 }
 
