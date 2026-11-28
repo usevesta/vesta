@@ -85,7 +85,9 @@ Open-source (Apache-2.0), local-first smart home wall panel built with **Tauri v
 - **This is a public repository.** Never include personal data in code, docs, examples, tests, fixtures or commit messages: real names or family references, home addresses or cities, device serial numbers, real IPs/MACs, Wi-Fi names. Use generic personas and placeholders.
 
 ## Common Commands
-- **Dev loop (no tablet needed):** `cargo run -p vesta-hubd -- --dev` (simulated home) in one terminal, `cd web && pnpm dev` in another (Vite proxies `/api` and `/ws` to the hub).
+- **Dev loop (no tablet needed):** `cargo run -p vesta-hubd -- --dev` (simulated home, sign-in off) in one terminal, `cd web && pnpm dev` in another (Vite proxies `/api`, WebSocket included, to the hub).
+- **Dev loop (the app, hot reload):** `cd apps/tauri && pnpm tauri dev --features hub` (in-process hub on `127.0.0.1:8181`, Vite on `localhost:1420`).
+- **Build the desktop app (macOS):** `cd apps/tauri && pnpm tauri build --features hub --debug --bundles app`
 - **Check Rust workspace:** `cargo check --workspace --all-features`
 - **Lint & Format Rust:** `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - **Run Rust tests:** `cargo test --workspace --all-features`

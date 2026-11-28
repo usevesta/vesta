@@ -482,6 +482,16 @@ fn snapshot_and_availability_messages() {
 }
 
 #[test]
+fn dashboard_changed_message() {
+    assert_wire(
+        &ServerMessage::from(DashboardChanged {
+            revision: "d-0123456789abcdef".to_owned(),
+        }),
+        json!({ "type": "dashboard_changed", "revision": "d-0123456789abcdef" }),
+    );
+}
+
+#[test]
 fn unknown_capabilities_are_ignored_for_forward_compatibility() {
     let capabilities: Capabilities = serde_json::from_value(json!({
         "on_off": { "state": { "on": false } },

@@ -1,0 +1,49 @@
+[package]
+name = "vesta-app"
+description = "VESTA app (com.usevesta.app): the wall panel with the Hub in-process (`--features hub`), or a client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+# `_lib` avoids a name clash with the binary (Windows/Cargo #8519).
+name = "vesta_app_lib"
+# staticlib: iOS, cdylib: Android, rlib: the desktop binary and tests.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "vesta-app"
+path = "src/main.rs"
+
+[features]
+default = []
+# Run the Hub in-process (wall tablet, desktop panel). Never on iOS.
+hub = ["dep:vesta-core", "dep:vesta-drivers", "dep:vesta-hub", "vesta-drivers/sim"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+tauri.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt", "std"] }
+vesta-core = { workspace = true, optional = true }
+vesta-drivers = { workspace = true, optional = true }
+vesta-hub = { workspace = true, optional = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+keepawake.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+ts-rs.workspace = true
+
+[lints]
+workspace = true

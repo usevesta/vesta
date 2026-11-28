@@ -49,12 +49,15 @@ pub use config::{
     HubSettings, NotificationsConfig,
 };
 pub use dashboard::{
-    DASHBOARD_SCHEMA_VERSION, Dashboard, DoorbellOverlay, EventRef, JsonObject, Kiosk, Page, Theme,
-    TouchScale, Widget,
+    DASHBOARD_SCHEMA_VERSION, Dashboard, DoorbellOverlay, EventRef, JsonObject, Kiosk,
+    MAX_GRID_COLUMNS, MAX_PAGES, MAX_ROW_SPAN, MAX_TITLE_CHARS, MAX_WIDGET_TYPE_LEN,
+    MAX_WIDGETS_PER_PAGE, Page, Theme, TouchScale, Widget,
 };
 pub use device::{Device, DeviceDescriptor, Endpoint, EndpointType};
 pub use driver::{DeviceDriver, DriverError, EventSink};
 pub use event::{EndpointEvent, EventKind};
 pub use id::{DeviceId, EndpointId, IdError, RoomId, Target};
-pub use message::{AvailabilityChange, ClientMessage, ServerMessage, Snapshot, StateChange};
+pub use message::{
+    AvailabilityChange, ClientMessage, DashboardChanged, ServerMessage, Snapshot, StateChange,
+};
 pub use units::{Hue, OutOfRange, Percent};

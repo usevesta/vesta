@@ -18,6 +18,9 @@ describe('decodeServerMessage', () => {
     const availability = { type: 'availability', device_id: 'living_room_fan', online: false }
     expect(decodeServerMessage(availability)).toEqual(availability)
 
+    const changed = { type: 'dashboard_changed', revision: '5f2c9a0e7b1d4c38' }
+    expect(decodeServerMessage(changed)).toEqual(changed)
+
     expect(decodeServerMessage({ type: 'command_result', request_id: 'c-1', ok: true })).toEqual({
       type: 'command_result',
       request_id: 'c-1',
@@ -52,6 +55,9 @@ describe('decodeServerMessage', () => {
       { type: 'event', target: 'a/main', event: 'doorbell.exploded', at: 'now' },
       { type: 'availability', device_id: 'a', online: 'yes' },
       { type: 'command_result', ok: true },
+      { type: 'dashboard_changed' },
+      { type: 'dashboard_changed', revision: '' },
+      { type: 'dashboard_changed', revision: 7 },
     ]) {
       expect(decodeServerMessage(bad), JSON.stringify(bad)).toBeNull()
     }

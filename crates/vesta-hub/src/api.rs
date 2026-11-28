@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
 use axum::http::header::{HOST, ORIGIN};
 use axum::middleware::{self, Next};
@@ -12,15 +12,16 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 use tokio::sync::watch;
-use vesta_core::{Dashboard, Snapshot};
+use vesta_core::Snapshot;
 
+use crate::dashboard::{self, Dashboards};
 use crate::runtime::Runtime;
 use crate::ws;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) runtime: Arc<Runtime>,
-    pub(crate) dashboard: Arc<Dashboard>,
+    pub(crate) dashboards: Arc<Dashboards>,
     /// Flips to `true` when the Hub shuts down, so WebSocket sessions close
     /// instead of holding graceful shutdown open.
     pub(crate) shutdown: watch::Receiver<bool>,
@@ -30,7 +31,12 @@ pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/devices", get(devices))
-        .route("/api/v1/dashboard", get(dashboard))
+        .route(
+            "/api/v1/dashboard",
+            get(dashboard::get)
+                .put(dashboard::put)
+                .layer(DefaultBodyLimit::max(dashboard::MAX_BODY_BYTES)),
+        )
         .route("/api/v1/ws", get(ws::upgrade))
         .layer(middleware::from_fn(local_only))
         .with_state(state)
@@ -50,16 +56,12 @@ async fn devices(State(state): State<AppState>) -> Json<Snapshot> {
     Json(state.runtime.snapshot())
 }
 
-async fn dashboard(State(state): State<AppState>) -> Json<Dashboard> {
-    Json(Dashboard::clone(&state.dashboard))
-}
-
 /// Defense in depth for a server on `127.0.0.1`: a web page in any browser
 /// on the same machine can reach it. Rejects requests whose `Host` is not
 /// local (DNS rebinding) and requests sent by pages from other origins
 /// (WebSockets are not covered by CORS). Requests without `Origin`
 /// (non-browser clients) are allowed.
-async fn local_only(request: Request, next: Next) -> Response {
+pub(crate) async fn local_only(request: Request, next: Next) -> Response {
     let headers = request.headers();
     let host_ok = headers
         .get(HOST)
@@ -77,7 +79,7 @@ async fn local_only(request: Request, next: Next) -> Response {
 }
 
 /// The host part of an `authority` (`host[:port]`, `[v6][:port]`).
-fn host_of(authority: &str) -> &str {
+pub(crate) fn host_of(authority: &str) -> &str {
     if let Some(rest) = authority.strip_prefix('[') {
         return rest.split_once(']').map_or("", |(host, _)| host);
     }
@@ -87,7 +89,7 @@ fn host_of(authority: &str) -> &str {
     }
 }
 
-fn is_local_host(host: &str) -> bool {
+pub(crate) fn is_local_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }

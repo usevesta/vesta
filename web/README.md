@@ -13,21 +13,26 @@ pnpm build
 ```
 
 Run the hub first (`cargo run -p vesta-hubd -- --dev` from the repo root), then `pnpm dev`.
-`VESTA_HUB_ORIGIN` points the dev proxy at a hub on another port.
+`VESTA_HUB_ORIGIN` points the dev proxy at a hub on another port. Under `pnpm tauri dev` (in
+`apps/tauri`) the dev server runs on port 1420 and proxies to the app's in-process hub on
+`127.0.0.1:8181`.
 
 Open `http://localhost:5173/?demo=1` to see every widget with local mock state (no home
-needed). Add `&lang=es` to force Spanish.
+needed). Tap **Edit** to try the screen editor; demo changes stay in the browser tab. Add `&lang=es` to force Spanish.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/api/generated/` | TypeScript types generated from Rust. Never edit by hand. |
+| `src/api/generated/` | TypeScript types generated from Rust. Never edit by hand. `shell/` holds the app shell's kiosk command types. |
 | `src/api/protocol.ts` | Runtime guards for everything the home sends (`ServerMessage`, dashboard). |
 | `src/api/http.ts` | `GET /api/v1/dashboard` and `/devices`, decoded. |
+| `src/api/dashboard-api.ts` | Dashboard with its revision (`ETag`), and saving it (`PUT` with `If-Match`). |
 | `src/live/` | The live app: the single connection (`live.ts`), device store with optimistic commands, widget bindings, screensaver and doorbell overlay. |
-| `e2e/` | End-to-end smoke test against `vesta-hubd --dev` (`pnpm test:e2e`). |
-| `src/widgets/registry.ts` | Widget type string → component. Unknown types show a placeholder. |
+| `e2e/` | End-to-end tests against `vesta-hubd --dev` (`pnpm test:e2e`): live control and editing the screen. |
+| `src/widgets/registry.ts` | Widget type string → component, plus editor metadata (endpoint types it shows, default size). Unknown types show a placeholder. |
+| `src/editor/` | The screen editor: draft model and edits (pure, tested), edit-mode UI (loaded on demand). |
+| `src/app/` | `LiveApp` (the home) and `DashboardScreen` (pages, tiles and the way into edit mode, shared with the demo). |
 | `src/widgets/*/` | Presentational widgets with their own props (no wire types). |
 | `src/components/dashboard/` | `DashboardGrid` (columns, spans, collapses on phones). |
 | `src/components/shell/` | Full-screen shell, page navigation, display settings, connection banner. |
@@ -36,6 +41,7 @@ needed). Add `&lang=es` to force Spanish.
 | `src/theme/` | Theme presets (`data-theme`), light/dark override, transparency toggle. |
 | `src/i18n/` | `en` and `es` strings. Every user-facing string goes through `t()`. |
 | `src/demo/` | Demo mode (`?demo=1`). |
+| `src/platform/` | The device: keep awake, brightness, kiosk mode. Calls the app shell's commands inside the app; reports `unsupported` in a plain browser. |
 
 ## Rules of thumb
 

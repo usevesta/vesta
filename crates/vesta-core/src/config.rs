@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::capability::MeterRole;
 use crate::device::{Endpoint, EndpointType};
-use crate::id::{DeviceId, EndpointId, RoomId};
+use crate::id::{DeviceId, EndpointId, IdError, RoomId};
 
 /// `schema_version` understood by this build for `config.json`.
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
@@ -34,6 +34,14 @@ pub enum ConfigError {
     DuplicateDevice(DeviceId),
     #[error("page `{0}` is defined more than once")]
     DuplicatePage(String),
+    #[error("page id `{page}` is invalid: {source}")]
+    InvalidPageId {
+        page: String,
+        #[source]
+        source: IdError,
+    },
+    #[error("{found} pages, at most {max} are allowed")]
+    TooManyPages { found: usize, max: usize },
     #[error("page `{page}`: {reason}")]
     InvalidLayout { page: String, reason: String },
 }

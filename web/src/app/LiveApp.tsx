@@ -1,24 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { Dashboard } from '@/api/generated'
-import { DashboardGrid, DashboardGridItem } from '@/components/dashboard/DashboardGrid'
-import { AppShell } from '@/components/shell/AppShell'
+import { DashboardScreen } from '@/app/DashboardScreen'
 import { ConnectionBanner } from '@/components/shell/ConnectionBanner'
 import { EmptyState } from '@/components/shell/EmptyState'
-import type { ShellPage } from '@/components/shell/PageNav'
 import { useDashboardStore } from '@/live/dashboard-store'
+import { saveLiveDashboard, useHomeItems } from '@/live/editor'
 import { DoorbellOverlayView } from '@/live/kiosk/DoorbellOverlayView'
 import { startDoorbell, startScreensaver } from '@/live/kiosk/kiosk'
 import { Screensaver } from '@/live/kiosk/Screensaver'
+import { startScreenControl } from '@/live/kiosk/screen'
 import { liveClient, startLive } from '@/live/live'
 import { LiveWidget } from '@/live/LiveWidget'
-import { isIconName } from '@/lib/icons'
 import { useConnectionStore } from '@/lib/ws/connection-store'
+import { platform } from '@/platform'
 
-/** Screensaver and doorbell overlay, configured by the dashboard. */
+/**
+ * Screensaver and doorbell overlay, configured by the dashboard. The screen
+ * stays awake and dims with the screensaver where the device allows it.
+ */
 function Kiosk({ dashboard }: { dashboard: Dashboard }) {
   const { kiosk, doorbell_overlay: overlay } = dashboard
+  useEffect(() => startScreenControl(platform()), [])
   useEffect(() => startScreensaver(kiosk, liveClient()), [kiosk])
   useEffect(() => (overlay === undefined ? undefined : startDoorbell(overlay, liveClient())), [overlay])
   return (
@@ -32,58 +36,38 @@ function Kiosk({ dashboard }: { dashboard: Dashboard }) {
 /**
  * Live mode: one connection to the home (see `src/live/live.ts`); pages
  * and widgets come from the home's dashboard, state from its devices.
+ * The screen editor saves back to the home.
  */
 export function LiveApp() {
   const { t } = useTranslation()
   const dashboard = useDashboardStore((s) => s.dashboard)
+  const revision = useDashboardStore((s) => s.revision)
   const failed = useDashboardStore((s) => s.failed)
   const status = useConnectionStore((s) => s.status)
-  const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const { items, ready } = useHomeItems()
 
   useEffect(() => startLive(), [])
 
-  const pages = useMemo(() => dashboard?.pages ?? [], [dashboard])
-  const page = pages.find((candidate) => candidate.id === selectedPageId) ?? pages[0]
-  const shellPages = useMemo<ShellPage[]>(
-    () => pages.map(({ id, title, icon }) => ({ id, title, icon: icon ?? 'home' })),
-    [pages],
+  const placeholder = failed ? (
+    <EmptyState icon="warning" title={t('dashboard.loadFailedTitle')} body={t('dashboard.loadFailedBody')} />
+  ) : (
+    <EmptyState
+      icon={status === 'open' ? 'loading' : 'connection_lost'}
+      title={t('connection.waitingTitle')}
+      body={t('connection.waitingBody')}
+    />
   )
-
-  let content: ReactNode
-  if (dashboard === null) {
-    content = failed ? (
-      <EmptyState icon="warning" title={t('dashboard.loadFailedTitle')} body={t('dashboard.loadFailedBody')} />
-    ) : (
-      <EmptyState
-        icon={status === 'open' ? 'loading' : 'connection_lost'}
-        title={t('connection.waitingTitle')}
-        body={t('connection.waitingBody')}
-      />
-    )
-  } else if (page === undefined) {
-    content = <EmptyState icon="home" title={t('dashboard.noPagesTitle')} body={t('dashboard.noPagesBody')} />
-  } else if (page.widgets.length === 0) {
-    const icon = page.icon !== undefined && isIconName(page.icon) ? page.icon : 'home'
-    content = <EmptyState icon={icon} title={t('dashboard.emptyPageTitle')} body={t('dashboard.emptyPageBody')} />
-  } else {
-    content = (
-      <DashboardGrid columns={page.grid_columns}>
-        {page.widgets.map((widget, index) => (
-          // Widgets have no id; their position on the page is stable.
-          <DashboardGridItem key={`${page.id}:${String(index)}`} colSpan={widget.col_span} rowSpan={widget.row_span}>
-            <LiveWidget widget={widget} />
-          </DashboardGridItem>
-        ))}
-      </DashboardGrid>
-    )
-  }
 
   return (
     <>
-      <AppShell
-        pages={shellPages}
-        activePageId={page?.id ?? null}
-        onSelectPage={setSelectedPageId}
+      <DashboardScreen
+        dashboard={dashboard}
+        revision={revision}
+        placeholder={placeholder}
+        renderWidget={(widget) => <LiveWidget widget={widget} />}
+        items={items}
+        itemsReady={ready}
+        save={saveLiveDashboard}
         banner={
           <ConnectionBanner
             onRetry={() => {
@@ -91,9 +75,7 @@ export function LiveApp() {
             }}
           />
         }
-      >
-        {content}
-      </AppShell>
+      />
       {dashboard !== null && <Kiosk dashboard={dashboard} />}
     </>
   )

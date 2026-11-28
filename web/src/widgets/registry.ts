@@ -9,12 +9,15 @@
  */
 import type { ComponentType } from 'react'
 
+import type { CapabilityKind, EndpointType } from '@/api/generated'
+import type { IconName } from '@/lib/icons'
 import { CameraPreview, type CameraPreviewProps } from '@/widgets/camera-preview/CameraPreview'
 import { ClockWeather, type ClockWeatherProps } from '@/widgets/clock-weather/ClockWeather'
 import { CoverControl, type CoverControlProps } from '@/widgets/cover-control/CoverControl'
 import { DoorButton, type DoorButtonProps } from '@/widgets/door-button/DoorButton'
 import { FanControl, type FanControlProps } from '@/widgets/fan-control/FanControl'
 import { LightControl, type LightControlProps } from '@/widgets/light-control/LightControl'
+import type { SizePreset } from '@/widgets/sizes'
 
 /** Props of every registered widget, keyed by its `type` string. */
 export interface WidgetPropsMap {
@@ -66,3 +69,65 @@ export function isWidgetType(type: string): type is WidgetType {
 export function getWidgetComponent<K extends WidgetType>(type: K): ComponentType<WidgetPropsMap[K]> {
   return widgetRegistry[type]
 }
+
+/**
+ * What the editor needs to know about a widget: which things in the home
+ * it shows (by endpoint type, never by brand) and how big it starts.
+ */
+export interface WidgetMeta {
+  /** Endpoint types this widget is made for. Empty: it shows no device (e.g. the clock). */
+  readonly endpointTypes: readonly EndpointType[]
+  /**
+   * The endpoint must have at least one of these capabilities. Tells
+   * widgets for the same type apart: a gate that moves (`cover`) gets
+   * cover controls, one that opens with a pulse (`trigger`) a door button.
+   */
+  readonly needsAnyOf?: readonly CapabilityKind[]
+  readonly defaultSize: SizePreset
+  /** Icon in the editor when there is no device to take one from. */
+  readonly icon: IconName
+}
+
+export const widgetMeta: Readonly<Record<WidgetType, WidgetMeta>> = {
+  'light-control': {
+    endpointTypes: ['light', 'outlet', 'switch'],
+    needsAnyOf: ['on_off'],
+    defaultSize: 'wide',
+    icon: 'light',
+  },
+  'fan-control': { endpointTypes: ['fan'], needsAnyOf: ['fan'], defaultSize: 'wide', icon: 'fan' },
+  'cover-control': {
+    endpointTypes: ['window_covering', 'garage_door', 'gate'],
+    needsAnyOf: ['cover'],
+    defaultSize: 'large',
+    icon: 'blind',
+  },
+  'door-button': {
+    endpointTypes: ['door', 'lock', 'gate', 'garage_door'],
+    needsAnyOf: ['trigger', 'lock'],
+    defaultSize: 'wide',
+    icon: 'door',
+  },
+  'camera-preview': { endpointTypes: ['camera', 'doorbell'], defaultSize: 'large', icon: 'camera' },
+  'clock-weather': { endpointTypes: [], defaultSize: 'wide', icon: 'clock' },
+}
+
+/**
+ * The widget that shows an endpoint of `type` with these capabilities,
+ * or null if no widget can show it yet (e.g. sensors and meters). The
+ * first match in `WIDGET_TYPES` order wins.
+ */
+export function pickWidgetType(type: EndpointType, capabilities: readonly CapabilityKind[]): WidgetType | null {
+  return (
+    WIDGET_TYPES.find((widget) => {
+      const meta = widgetMeta[widget]
+      if (!meta.endpointTypes.includes(type)) return false
+      return meta.needsAnyOf === undefined || meta.needsAnyOf.some((kind) => capabilities.includes(kind))
+    }) ?? null
+  )
+}
+
+/** Widgets that show no device and can go on any page (the clock). */
+export const EXTRA_WIDGET_TYPES: readonly WidgetType[] = WIDGET_TYPES.filter(
+  (type) => widgetMeta[type].endpointTypes.length === 0,
+)

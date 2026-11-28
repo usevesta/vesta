@@ -25,6 +25,9 @@
 //! - `seed`: makes failures deterministic (tests).
 //! - `ring_every_sec` (`doorbell` only): rings periodically, emitting
 //!   `occupancy.detected` and `doorbell.pressed`.
+//!
+//! [`demo`] holds a whole simulated home (config and dashboard) for
+//! `vesta-hubd --dev` and for the app when no home is set up yet.
 
 use std::cmp::Ordering;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -749,6 +752,16 @@ impl DeviceDriver for SimDriver {
             }
         }
     }
+}
+
+/// The built-in simulated home: lights, a ceiling fan with a light, a
+/// blind, a garage door, a door strike and a doorbell that rings every
+/// 3 minutes. Every device uses the `sim` driver, so there are no secrets.
+pub mod demo {
+    /// `config.json` of the simulated home.
+    pub const CONFIG: &str = include_str!("../fixtures/demo-config.json");
+    /// `dashboard.json` of the simulated home.
+    pub const DASHBOARD: &str = include_str!("../fixtures/demo-dashboard.json");
 }
 
 #[cfg(test)]

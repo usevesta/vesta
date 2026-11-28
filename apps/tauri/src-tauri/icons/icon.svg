@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Placeholder app icon (generic, not a logo). Regenerate the PNG/ICNS/ICO
+       files with `pnpm tauri icon src-tauri/icons/icon.svg` from apps/tauri. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#3a3d42"/>
+  <path d="M512 272 L752 476 V752 H592 V592 H432 V752 H272 V476 Z"
+        fill="none" stroke="#e6e7e9" stroke-width="56" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

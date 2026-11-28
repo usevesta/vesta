@@ -35,7 +35,7 @@ export function liveClient(): LiveClient {
 export function startLive(): () => void {
   const live = liveClient()
   const unbindConnection = bindConnectionStore(live.socket)
-  const stopDashboard = startDashboardSync(live.socket)
+  const stopDashboard = startDashboardSync(live)
   live.start()
   return () => {
     stopDashboard()

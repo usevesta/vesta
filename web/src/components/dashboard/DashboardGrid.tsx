@@ -9,7 +9,7 @@ import {
   type RefObject,
 } from 'react'
 
-import { clampSpan, DEFAULT_MIN_COLUMN_WIDTH, effectiveColumns } from '@/components/dashboard/grid-layout'
+import { clampSpan, DEFAULT_MIN_COLUMN_WIDTH, effectiveColumns, packsTiles } from '@/components/dashboard/grid-layout'
 import { cn } from '@/lib/utils'
 
 const GridColumnsContext = createContext(1)
@@ -21,6 +21,8 @@ export interface DashboardGridProps {
   minColumnWidth?: number
   /** Minimum row height (CSS length). Rows grow to fit their content. */
   rowHeight?: string
+  /** Never fill gaps with later tiles (the editor: every move must be visible). */
+  keepOrder?: boolean
   className?: string
   children?: ReactNode
 }
@@ -54,11 +56,13 @@ export function DashboardGrid({
   columns,
   minColumnWidth = DEFAULT_MIN_COLUMN_WIDTH,
   rowHeight = '9rem',
+  keepOrder = false,
   className,
   children,
 }: DashboardGridProps) {
   const [ref, width] = useElementWidth()
   const visibleColumns = effectiveColumns(columns, width, minColumnWidth)
+  const dense = !keepOrder && packsTiles(columns, visibleColumns)
   const style: CSSProperties = {
     gridTemplateColumns: `repeat(${String(visibleColumns)}, minmax(0, 1fr))`,
     gridAutoRows: `minmax(${rowHeight}, auto)`,
@@ -69,7 +73,8 @@ export function DashboardGrid({
         ref={ref}
         data-slot="dashboard-grid"
         data-columns={visibleColumns}
-        className={cn('grid grid-flow-row-dense gap-3 md:gap-4', className)}
+        data-packed={dense || undefined}
+        className={cn('grid gap-3 md:gap-4', dense ? 'grid-flow-row-dense' : 'grid-flow-row', className)}
         style={style}
       >
         {children}
