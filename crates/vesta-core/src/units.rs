@@ -127,9 +127,120 @@ impl<'de> Deserialize<'de> for Hue {
     }
 }
 
+/// A time of day that is not written `HH:MM` (`00:00`–`23:59`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a time of day is written HH:MM, from 00:00 to 23:59")]
+pub struct InvalidTimeOfDay;
+
+/// A time of day on a 24-hour clock, in the home's local time. On the wire
+/// it is `"HH:MM"` (`"00:00"`–`"23:59"`); inside, minutes past midnight
+/// (Matter: `MinutesPastMidnight`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, TS)]
+pub struct TimeOfDay(#[ts(type = "string")] u16);
+
+impl TimeOfDay {
+    pub const MIDNIGHT: Self = Self(0);
+    const MINUTES_PER_DAY: u16 = 24 * 60;
+
+    pub const fn new(hour: u8, minute: u8) -> Result<Self, InvalidTimeOfDay> {
+        if hour < 24 && minute < 60 {
+            Ok(Self(hour as u16 * 60 + minute as u16))
+        } else {
+            Err(InvalidTimeOfDay)
+        }
+    }
+
+    /// From minutes past midnight, `0..1440`.
+    pub const fn from_minutes(minutes: u16) -> Result<Self, InvalidTimeOfDay> {
+        if minutes < Self::MINUTES_PER_DAY {
+            Ok(Self(minutes))
+        } else {
+            Err(InvalidTimeOfDay)
+        }
+    }
+
+    /// Minutes past midnight, `0..1440`.
+    pub const fn minutes(self) -> u16 {
+        self.0
+    }
+
+    pub const fn hour(self) -> u8 {
+        (self.0 / 60) as u8
+    }
+
+    pub const fn minute(self) -> u8 {
+        (self.0 % 60) as u8
+    }
+}
+
+impl fmt::Display for TimeOfDay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:02}:{:02}", self.hour(), self.minute())
+    }
+}
+
+impl std::str::FromStr for TimeOfDay {
+    type Err = InvalidTimeOfDay;
+
+    /// Exactly `HH:MM`, two digits each.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let bytes = text.as_bytes();
+        if bytes.len() != 5 || bytes.get(2) != Some(&b':') {
+            return Err(InvalidTimeOfDay);
+        }
+        let digit = |i: usize| match bytes.get(i) {
+            Some(b) if b.is_ascii_digit() => Ok(b - b'0'),
+            _ => Err(InvalidTimeOfDay),
+        };
+        Self::new(digit(0)? * 10 + digit(1)?, digit(3)? * 10 + digit(4)?)
+    }
+}
+
+impl Serialize for TimeOfDay {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for TimeOfDay {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        text.parse().map_err(de::Error::custom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_of_day_is_hh_mm() {
+        let time: TimeOfDay = serde_json::from_str("\"22:30\"").unwrap();
+        assert_eq!((time.hour(), time.minute(), time.minutes()), (22, 30, 1350));
+        assert_eq!(serde_json::to_string(&time).unwrap(), "\"22:30\"");
+        assert_eq!(TimeOfDay::new(6, 5).unwrap().to_string(), "06:05");
+        assert_eq!("00:00".parse::<TimeOfDay>(), Ok(TimeOfDay::MIDNIGHT));
+        assert_eq!("23:59".parse::<TimeOfDay>().unwrap().minutes(), 1439);
+        for bad in [
+            "24:00",
+            "12:60",
+            "7:00",
+            "07:0",
+            "0700",
+            "07-00",
+            "",
+            "ab:cd",
+            "07:00:00",
+            " 07:00",
+            "+1:00",
+            "٠٧:٠٠",
+        ] {
+            assert!(bad.parse::<TimeOfDay>().is_err(), "{bad}");
+        }
+        assert!(serde_json::from_str::<TimeOfDay>("420").is_err());
+        assert!(TimeOfDay::from_minutes(1440).is_err());
+        assert!(TimeOfDay::new(24, 0).is_err());
+    }
 
     #[test]
     fn percent_range() {

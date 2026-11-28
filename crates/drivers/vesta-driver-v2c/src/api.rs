@@ -257,6 +257,7 @@ impl Reading {
             mode: self.mode(),
             locked: self.locked,
             schedule_enabled: self.timer,
+            charging_schedule: None,
         })
     }
 

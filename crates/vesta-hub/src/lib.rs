@@ -57,6 +57,9 @@ pub struct HubOptions {
     /// How long a driver has to accept a command before the client gets
     /// `timeout`.
     pub command_timeout: Duration,
+    /// The same for slow commands (`Command::is_slow`, e.g. saving a
+    /// charger's hours, which may go through the internet).
+    pub slow_command_timeout: Duration,
     /// Updates buffered per WebSocket session before it must resync with a
     /// fresh snapshot.
     pub bus_capacity: usize,
@@ -79,6 +82,7 @@ impl Default for HubOptions {
     fn default() -> Self {
         Self {
             command_timeout: Self::DEFAULT_COMMAND_TIMEOUT,
+            slow_command_timeout: vesta_core::SLOW_COMMAND_TIMEOUT,
             bus_capacity: EventBus::DEFAULT_CAPACITY,
             auth: ApiAuth::default(),
             allowed_origins: Vec::new(),

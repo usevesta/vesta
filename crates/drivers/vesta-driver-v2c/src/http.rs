@@ -18,6 +18,8 @@ pub(crate) struct Http {
 impl Http {
     pub(crate) fn new(timeout: Duration) -> Result<Self, DriverError> {
         let client = reqwest::Client::builder()
+            // Plain HTTP on the LAN; the library still wants a TLS set-up.
+            .tls_backend_preconfigured(crate::cloud::tls_config()?)
             .timeout(timeout)
             .connect_timeout(timeout.min(Duration::from_secs(2)))
             .pool_max_idle_per_host(0)

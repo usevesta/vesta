@@ -17,15 +17,18 @@
 //! - `solar` charges only with surplus, `solar_grid` tops the surplus up to
 //!   the minimum current, `manual` charges at the set current;
 //! - the car's onboard charger ramps up a few amps per tick;
-//! - with the schedule on, it charges only during the night (off-peak).
+//! - with the schedule on, it charges only within its charging hours (by
+//!   default 23:00–07:00 every day, off-peak), which `set_charging_schedule`
+//!   changes. The simulated week starts on a Monday.
 
 use std::f64::consts::PI;
 use std::time::Duration;
 
 use vesta_core::{
-    Capabilities, DriverError, Endpoint, EndpointId, EndpointType, EvChargeMode,
-    EvChargerCapability, EvChargerCommand, EvChargerFeatures, EvChargerState, EvChargerStatus,
-    EvChargerWaitReason, MeterRole, PowerMeterCapability, PowerMeterFeatures, PowerMeterState,
+    Capabilities, ChargingSchedule, ChargingScheduleFeatures, ChargingWindow, DriverError,
+    Endpoint, EndpointId, EndpointType, EvChargeMode, EvChargerCapability, EvChargerCommand,
+    EvChargerFeatures, EvChargerState, EvChargerStatus, EvChargerWaitReason, MeterRole,
+    PowerMeterCapability, PowerMeterFeatures, PowerMeterState, TimeOfDay, Weekday,
 };
 
 /// How often the charger and the meters report.
@@ -36,9 +39,26 @@ pub(crate) const DAY_SECS: f64 = 720.0;
 const START_HOUR: f64 = 10.5;
 const SUNRISE_HOUR: f64 = 7.5;
 const SUNSET_HOUR: f64 = 20.5;
-/// The schedule's charging hours: 23:00 to 07:00 (off-peak).
-const SCHEDULE_FROM_HOUR: f64 = 23.0;
-const SCHEDULE_TO_HOUR: f64 = 7.0;
+/// The schedule's charging hours until changed: 23:00 to 07:00 (off-peak).
+const SCHEDULE_FROM: TimeOfDay = match TimeOfDay::new(23, 0) {
+    Ok(time) => time,
+    Err(_) => TimeOfDay::MIDNIGHT,
+};
+const SCHEDULE_TO: TimeOfDay = match TimeOfDay::new(7, 0) {
+    Ok(time) => time,
+    Err(_) => TimeOfDay::MIDNIGHT,
+};
+
+/// What the simulated charger's schedule can do: like a charger that keeps
+/// two time windows and reports them.
+pub(crate) const SCHEDULE_FEATURES: ChargingScheduleFeatures = ChargingScheduleFeatures {
+    max_windows: 2,
+    weekdays: true,
+    overnight: true,
+    editable: true,
+    reports_windows: true,
+    saving_needs_internet: false,
+};
 
 const SOLAR_PEAK_W: f64 = 4_200.0;
 pub(crate) const CONTRACTED_W: f64 = 5_750.0;
@@ -110,8 +130,36 @@ fn appliances_w(hour: f64, elapsed_s: f64) -> f64 {
     load
 }
 
-fn in_schedule(hour: f64) -> bool {
-    hour >= SCHEDULE_FROM_HOUR || hour < SCHEDULE_TO_HOUR
+/// Day of the week (the simulated week starts on a Monday) and minute of
+/// the day after `elapsed_s` seconds.
+fn day_and_minute(elapsed_s: f64) -> (usize, u16) {
+    let hours = START_HOUR + elapsed_s.max(0.0) / DAY_SECS * 24.0;
+    let day = ((hours / 24.0).floor() as usize) % 7;
+    let minute = ((hours.rem_euclid(24.0)) * 60.0).floor() as u16;
+    (day, minute.min(24 * 60 - 1))
+}
+
+/// Whether a time (day 0 = Monday, minute of the day) is within the
+/// charging hours. A window past midnight belongs to the day it starts.
+fn within(windows: &[ChargingWindow], day: usize, minute: u16) -> bool {
+    let yesterday = (day + 6) % 7;
+    let on = |window: &ChargingWindow, day: usize| window.days.iter().any(|d| d.index() == day);
+    windows.iter().any(|window| {
+        let (start, end) = (window.start.minutes(), window.end.minutes());
+        if start < end {
+            on(window, day) && (start..end).contains(&minute)
+        } else {
+            (on(window, day) && minute >= start) || (on(window, yesterday) && minute < end)
+        }
+    })
+}
+
+fn default_windows() -> Vec<ChargingWindow> {
+    vec![ChargingWindow {
+        start: SCHEDULE_FROM,
+        end: SCHEDULE_TO,
+        days: Weekday::ALL.to_vec(),
+    }]
 }
 
 fn round_w(watts: f64) -> f64 {
@@ -135,6 +183,7 @@ pub(crate) struct EvSim {
     paused: bool,
     locked: bool,
     schedule_enabled: bool,
+    windows: Vec<ChargingWindow>,
     mode: EvChargeMode,
     setpoint_a: f64,
     // What is happening.
@@ -161,6 +210,7 @@ impl EvSim {
             paused: false,
             locked: false,
             schedule_enabled: false,
+            windows: default_windows(),
             mode: EvChargeMode::Manual,
             setpoint_a: 16.0,
             status: EvChargerStatus::Connected,
@@ -244,7 +294,7 @@ impl EvSim {
             (EvChargerStatus::Paused, None)
         } else if self.locked || car_full {
             (EvChargerStatus::Connected, None)
-        } else if self.schedule_enabled && !in_schedule(hour) {
+        } else if self.schedule_enabled && !self.in_schedule() {
             (
                 EvChargerStatus::Waiting,
                 Some(EvChargerWaitReason::Schedule),
@@ -306,6 +356,16 @@ impl EvSim {
             EvChargerCommand::Lock => self.locked = true,
             EvChargerCommand::Unlock => self.locked = false,
             EvChargerCommand::SetSchedule { enabled } => self.schedule_enabled = enabled,
+            EvChargerCommand::SetChargingSchedule { enabled, windows } => {
+                SCHEDULE_FEATURES
+                    .check(&windows)
+                    .map_err(|_| DriverError::Unsupported)?;
+                self.windows = windows
+                    .into_iter()
+                    .map(ChargingWindow::normalized)
+                    .collect();
+                self.schedule_enabled = enabled;
+            }
         }
         self.step(0.0);
         Ok(())
@@ -330,6 +390,10 @@ impl EvSim {
             mode: Some(self.mode),
             locked: Some(self.locked),
             schedule_enabled: Some(self.schedule_enabled),
+            charging_schedule: Some(ChargingSchedule {
+                enabled: self.schedule_enabled,
+                windows: self.windows.clone(),
+            }),
         }
     }
 
@@ -350,6 +414,12 @@ impl EvSim {
 
     pub(crate) fn battery_state(&self) -> PowerMeterState {
         meter(self.battery_w, None)
+    }
+
+    /// Within the charging hours right now.
+    fn in_schedule(&self) -> bool {
+        let (day, minute) = day_and_minute(self.elapsed_s);
+        within(&self.windows, day, minute)
     }
 
     #[cfg(test)]
@@ -406,6 +476,7 @@ pub(crate) fn endpoints(sim: &EvSim) -> Result<Vec<Endpoint>, DriverError> {
                         adjustable_current: true,
                         lock: true,
                         schedule: true,
+                        charging_schedule: Some(SCHEDULE_FEATURES),
                     },
                     state: None,
                 }),
@@ -563,8 +634,79 @@ mod tests {
         assert_eq!(state.schedule_enabled, Some(true));
         // 23:00 is 12.5 simulated hours after 10:30.
         run_for(&mut sim, DAY_SECS * 12.6 / 24.0);
-        assert!(in_schedule(sim.hour()), "{}", sim.hour());
+        assert!(sim.in_schedule(), "{}", sim.hour());
         assert_eq!(sim.charger_state().status, EvChargerStatus::Charging);
+    }
+
+    fn window(start: &str, end: &str, days: &[Weekday]) -> ChargingWindow {
+        ChargingWindow {
+            start: start.parse().unwrap(),
+            end: end.parse().unwrap(),
+            days: days.to_vec(),
+        }
+    }
+
+    #[test]
+    fn charging_hours_can_be_changed() {
+        use Weekday::*;
+        let mut sim = EvSim::new(true, false);
+        let state = sim.charger_state().charging_schedule.unwrap();
+        assert!(!state.enabled);
+        assert_eq!(state.windows, [window("23:00", "07:00", &Weekday::ALL)]);
+
+        // Monday 10:30: within 10:00–12:00 on Mondays.
+        sim.apply(EvChargerCommand::SetChargingSchedule {
+            enabled: true,
+            windows: vec![window("10:00", "12:00", &[Wednesday, Monday])],
+        })
+        .unwrap();
+        let state = sim.charger_state();
+        assert_eq!(state.status, EvChargerStatus::Charging);
+        assert_eq!(state.schedule_enabled, Some(true));
+        let schedule = state.charging_schedule.unwrap();
+        assert_eq!(schedule.windows[0].days, [Monday, Wednesday]);
+
+        // Not on Tuesdays.
+        sim.apply(EvChargerCommand::SetChargingSchedule {
+            enabled: true,
+            windows: vec![window("10:00", "12:00", &[Tuesday])],
+        })
+        .unwrap();
+        assert_eq!(
+            sim.charger_state().waiting_for,
+            Some(EvChargerWaitReason::Schedule)
+        );
+
+        // Hours that do not fit are refused and change nothing.
+        let three = vec![window("01:00", "02:00", &[Monday]); 3];
+        assert!(matches!(
+            sim.apply(EvChargerCommand::SetChargingSchedule {
+                enabled: true,
+                windows: three
+            }),
+            Err(DriverError::Unsupported)
+        ));
+        assert_eq!(
+            sim.charger_state().charging_schedule.unwrap().windows[0].days,
+            [Tuesday]
+        );
+    }
+
+    #[test]
+    fn windows_past_midnight_belong_to_the_day_they_start() {
+        use Weekday::*;
+        let friday_night = [window("22:00", "06:00", &[Friday])];
+        assert!(within(&friday_night, Friday.index(), 23 * 60));
+        assert!(within(&friday_night, Saturday.index(), 5 * 60));
+        assert!(!within(&friday_night, Saturday.index(), 6 * 60));
+        assert!(!within(&friday_night, Friday.index(), 5 * 60));
+        assert!(!within(&friday_night, Thursday.index(), 23 * 60));
+        // Sunday night runs into Monday.
+        let sunday_night = [window("23:00", "01:00", &[Sunday])];
+        assert!(within(&sunday_night, Monday.index(), 30));
+        assert_eq!(day_and_minute(0.0), (Monday.index(), 10 * 60 + 30));
+        assert_eq!(day_and_minute(DAY_SECS * 6.0).0, Sunday.index());
+        assert_eq!(day_and_minute(DAY_SECS * 7.0).0, Monday.index());
     }
 
     #[test]

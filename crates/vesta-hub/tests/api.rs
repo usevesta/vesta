@@ -531,6 +531,54 @@ async fn slow_devices_time_out() {
 }
 
 #[tokio::test]
+async fn saving_charging_hours_gets_longer_than_other_commands() {
+    // Saving a charger's hours may go through the internet.
+    let home = r#"{ "schema_version": 1, "home_name": "Test", "devices": [
+        { "id": "car_charger", "name": "Charger", "driver": "sim",
+          "config": { "model": "ev_charger", "latency_ms": 400 } } ] }"#;
+    let options = HubOptions {
+        command_timeout: Duration::from_millis(200),
+        slow_command_timeout: Duration::from_secs(3),
+        ..HubOptions::default()
+    };
+    let addr = start(home, Registry::builtin(), options).await;
+    let (mut ws, _) = connect_online(addr).await;
+    let pause = command(
+        &mut ws,
+        "p-1",
+        "car_charger/charger",
+        json!({ "capability": "ev_charger", "action": "pause" }),
+        false,
+    )
+    .await;
+    assert_eq!(pause, CommandResult::failed("p-1", CommandError::Timeout));
+    let save = command(
+        &mut ws,
+        "s-1",
+        "car_charger/charger",
+        json!({ "capability": "ev_charger", "action": "set_charging_schedule", "enabled": true,
+                "windows": [{ "start": "22:00", "end": "06:00", "days": ["saturday", "sunday"] }] }),
+        false,
+    )
+    .await;
+    assert_eq!(save, CommandResult::ok("s-1"));
+    // Hours that do not fit the charger never reach it.
+    let empty = command(
+        &mut ws,
+        "s-2",
+        "car_charger/charger",
+        json!({ "capability": "ev_charger", "action": "set_charging_schedule", "enabled": true,
+                "windows": [] }),
+        false,
+    )
+    .await;
+    assert_eq!(
+        empty,
+        CommandResult::failed("s-2", CommandError::Unsupported)
+    );
+}
+
+#[tokio::test]
 async fn failing_devices_report_a_device_error() {
     let home = r#"{ "schema_version": 1, "home_name": "Test", "devices": [
         { "id": "flaky_light", "name": "Flaky", "driver": "sim",

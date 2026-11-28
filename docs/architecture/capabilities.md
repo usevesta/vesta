@@ -93,7 +93,15 @@ function. The grid meter carries the contracted power as `limit_w`.
             "pause": true,
             "adjustable_current": true,
             "lock": true,
-            "schedule": true
+            "schedule": true,
+            "charging_schedule": {
+              "max_windows": 2,
+              "weekdays": true,
+              "overnight": true,
+              "editable": true,
+              "reports_windows": false,
+              "saving_needs_internet": true
+            }
           },
           "state": {
             "status": "charging",
@@ -107,7 +115,14 @@ function. The grid meter carries the contracted power as `limit_w`.
             "max_current_a": 30.0,
             "mode": "scheduled",
             "locked": false,
-            "schedule_enabled": true
+            "schedule_enabled": true,
+            "charging_schedule": {
+              "enabled": true,
+              "windows": [
+                { "start": "22:00", "end": "06:00", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"] },
+                { "start": "00:00", "end": "08:00", "days": ["saturday", "sunday"] }
+              ]
+            }
           }
         }
       }
@@ -229,7 +244,7 @@ The type decides the icon, the default widget and whether opening commands are s
 | `temperature` | — | `celsius` | — | — | v2 |
 | `humidity` | — | `percent: 0–100` | — | — | v2 |
 | `power_meter` | `role` (`grid`, `solar`, `load`, `ev`, `house`, `battery`), `bidirectional: bool` | `power_w`, `energy_wh?`, `energy_exported_wh?`, `limit_w?`, `voltage_v?`, `current_a?` | — | — | v2 |
-| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }` | — | v2 |
+| `ev_charger` | `min_current_a`, `max_current_a`, `modes` (`manual`, `solar`, `solar_grid`, `scheduled`), `pause`, `adjustable_current`, `lock`, `schedule` (bools), `charging_schedule?` (`max_windows`, `weekdays`, `overnight`, `editable`, `reports_windows`, `saving_needs_internet`) | `status: disconnected \| connected \| charging \| paused \| waiting \| error`, `waiting_for?: schedule \| solar \| power`, `power_w`, `session_energy_wh`, `session_duration_s?`, `current_a`, `auto_current?`, `phase_current_a?: [A]`, `min_current_a?`, `max_current_a?`, `mode?`, `locked?`, `schedule_enabled?`, `charging_schedule?: { enabled, windows: [{ start, end, days }] }` | `pause`, `resume`, `set_current { amps }`, `set_mode { mode }`, `lock`, `unlock`, `set_schedule { enabled }`, `set_charging_schedule { enabled, windows }` | — | v2 |
 | `battery` | — | `percent: 0–100`, `low: bool` | — | — | v2 |
 | `robot_vacuum` | `start`, `pause`, `return_to_dock` (bools) | `status: docked \| charging \| cleaning \| paused \| returning \| idle \| error`, `cleaned_area_m2?`, `cleaning_duration_s?` | `start`, `pause`, `return_to_dock` | — | v2 |
 
@@ -243,6 +258,10 @@ Notes:
 - `ev_charger.status: waiting` means a car is plugged in and the charger holds back by itself; `waiting_for` says why (`schedule`: outside the charger's hours, `solar`: not enough surplus sun, `power`: the home uses too much for even the minimum current), only when the charger makes it clear. `paused` is someone pausing it; `connected` is plugged in with no reason given (e.g. the car is full).
 - `ev_charger.current_a` is the setpoint (what the charger offers the car); `phase_current_a` is what the car draws, per phase (L1 first).
 - `ev_charger.mode`: `manual` charges at the set current (as fast as allowed), `solar` only with surplus sun, `solar_grid` with surplus sun topped up from the grid to the minimum current, `scheduled` as planned on the charger. Chargers whose schedule is a separate on/off (in any mode) report `features.schedule` and `state.schedule_enabled` instead.
+- `ev_charger` charging hours (Matter: no EnergyEVSE equivalent; its `ChargingTargetSchedules` are "charged by" targets, not windows). The schedule **lives in the charger**, which follows it by itself, so it keeps working when VESTA, the panel or the internet are down (AGENTS.md rule 7). VESTA only stores hours in it and switches it on and off.
+  - `features.charging_schedule` says what the charger holds and what VESTA can do: up to `max_windows` time windows; `weekdays`: each window can be limited to some days (otherwise every window is every day); `overnight`: a window may run past midnight (it ends before it starts); `editable`: `set_charging_schedule` works; `reports_windows`: the charger reports its hours (when `false`, `state.charging_schedule` holds the hours last saved from VESTA, which may have been changed elsewhere since, and is omitted until then); `saving_needs_internet`: storing the hours goes through the internet (switching the schedule on and off with `set_schedule`, and following it, do not). Omitted when the charger has no windows or they can only be seen and changed on the charger (or its own app); `set_schedule` still switches them on and off.
+  - `state.charging_schedule`: `enabled` (same as `schedule_enabled`) and `windows`, each `{ start, end, days }`. A window that ends before it starts runs past midnight, and `days` are the days it starts on (Friday 22:00–06:00 ends on Saturday morning). Days are in week order.
+  - `set_charging_schedule { enabled, windows }` stores the windows and switches the schedule on or off in one go. It needs `features.charging_schedule.editable` and windows that fit (1 to `max_windows`, each with at least one day and no day twice, every day when the charger has no `weekdays`, start ≠ end, past midnight only with `overnight`); the Hub answers `unsupported` otherwise. It is a **slow** command: the Hub and the screens wait 20 s instead of 5 s.
 - A charger and the meters it reads (grid, house, solar, battery) are **endpoints of one device**: a charger widget finds its meters among its sibling endpoints by `role`.
 - `power_meter.limit_w` is the most power the connection may draw (the contracted power on a `grid` meter). It is informative only: VESTA never enforces it; the devices that do keep doing it.
 - `power_meter.energy_wh` is omitted when the device only measures power (no invented counters).
@@ -263,6 +282,7 @@ Notes:
 
 ## Units & Conventions
 - Percent: integers `0–100`. Color temperature: Kelvin (not mireds). Hue: degrees `0–360`. Power: W. Energy: Wh. Temperature: °C. Durations: ms. Current: A.
+- Time of day: `"HH:MM"`, 24-hour clock (`"00:00"`–`"23:59"`), the home's local time (Matter: minutes past midnight). Days of the week: `monday` … `sunday`.
 - Cover position: `100` = fully open, `0` = fully closed. (Matter's lift percentage is inverted; the bridge converts.)
 - Power sign follows the meter `role`'s natural direction: `grid` positive = importing, negative = exporting; `solar` positive = producing; `load`/`ev` positive = consuming; `house` (the whole home, sub-metered loads such as the EV charger included) positive = consuming; `battery` positive = discharging (supplying the home), negative = charging.
 - Drivers convert vendor units (e.g. brightness `10–1000` → `0–100`). Rounding is the driver's job, never the frontend's.
@@ -276,7 +296,14 @@ Notes:
     "confirmed": false }
   ```
 - `confirmed` (default `false`) is `true` only after the user explicitly confirmed a sensitive command (see below).
-- Lifecycle: the frontend shows the change as **pending** immediately, the Hub forwards it to the driver, and the pending state resolves when the driver reports the new state. If no confirmation arrives before the timeout (default 5 s), the UI reverts and shows an error.
+- Lifecycle: the frontend shows the change as **pending** immediately, the Hub forwards it to the driver, and the pending state resolves when the driver reports the new state. If no confirmation arrives before the timeout (default 5 s; 20 s for slow commands such as `ev_charger.set_charging_schedule`, which may go through the internet), the UI reverts and shows an error. While a command is on its way, the control that sent it is busy and refuses to send it again.
+- Saving a charger's hours (a slow command):
+  ```json
+  { "type": "command", "request_id": "c-44", "target": "car_charger/charger",
+    "command": { "capability": "ev_charger", "action": "set_charging_schedule", "enabled": true,
+                 "windows": [{ "start": "22:00", "end": "06:00", "days": ["saturday", "sunday"] }] },
+    "confirmed": false }
+  ```
 - Result: the Hub answers every command with a `command_result`. `ok: true` means the device accepted it; `error` is present exactly when `ok` is `false`:
   ```json
   { "type": "command_result", "request_id": "c-42", "ok": false, "error": { "code": "rejected", "reason": "confirmation_required" } }
@@ -373,7 +400,8 @@ pub enum Command {
     Fan(FanCommand),                   // SetSpeed { speed }, SetDirection { direction }
     Lock(LockCommand),                 // Lock, Unlock, Unlatch
     Trigger(TriggerCommand),           // Fire
-    EvCharger(EvChargerCommand),       // Pause, Resume, SetCurrent { amps }, SetMode { mode }
+    EvCharger(EvChargerCommand),       // Pause, Resume, SetCurrent { amps }, SetMode { mode }, Lock, Unlock,
+                                       // SetSchedule { enabled }, SetChargingSchedule { enabled, windows }
     RobotVacuum(RobotVacuumCommand),   // Start, Pause, ReturnToDock
 }
 ```
@@ -410,6 +438,7 @@ Drivers return `DriverError::Unsupported` for commands they cannot execute. Rout
 | `temperature` | TemperatureMeasurement |
 | `humidity` | RelativeHumidityMeasurement |
 | `power_meter` | ElectricalPowerMeasurement, ElectricalEnergyMeasurement |
+| `ev_charger` charging hours (`charging_schedule`) | no equivalent (EnergyEVSE `ChargingTargetSchedules` are targets, not windows); a bridge exposes `schedule_enabled` only |
 | `ev_charger` | EnergyEVSE (`State`, `SupplyState`, `SessionDuration`, `SessionEnergyCharged`, `MinimumChargeCurrent` / `MaximumChargeCurrent`, `CircuitCapacity` for the hardware maximum; `pause`/`resume` ↔ `Disable` / `EnableCharging`), EnergyEVSEMode for `mode` (Manual, TimeOfUse, SolarCharging), ElectricalPowerMeasurement for power and per-phase current; `lock` has no EVSE equivalent |
 | `battery` | PowerSource |
 | `robot_vacuum` | RVC Operational State (`docked` ↔ Docked, `charging` ↔ Charging, `cleaning` ↔ Running, `paused` ↔ Paused, `returning` ↔ SeekingCharger, `idle` ↔ Stopped, `error` ↔ Error; `start`/`pause`/`return_to_dock` ↔ Resume / Pause / GoHome), RVC Run Mode (Idle, Cleaning) |

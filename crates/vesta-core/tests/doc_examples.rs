@@ -12,6 +12,7 @@ use vesta_core::{
     CapabilityState, ClientMessage, Command, CommandError, Device, DeviceConfig, EndpointType,
     EvChargeMode, EvChargerCommand, EvChargerStatus, EvChargerWaitReason, EventKind, LevelCommand,
     MeterRole, OnOffCommand, RejectReason, RobotVacuumCommand, RobotVacuumStatus, ServerMessage,
+    Weekday,
 };
 
 const CAPABILITIES_DOC: &str = include_str!("../../../docs/architecture/capabilities.md");
@@ -80,15 +81,24 @@ fn every_capabilities_md_json_example_round_trips() {
                             })
                         ));
                     }
-                    "car_charger/charger" => {
-                        // Sensitive: sent only after the person confirmed.
-                        assert!(request.confirmed);
-                        assert_eq!(
-                            request.command,
-                            Command::EvCharger(EvChargerCommand::Unlock)
-                        );
-                        assert!(request.command.is_sensitive(EndpointType::EvCharger));
-                    }
+                    "car_charger/charger" => match &request.command {
+                        Command::EvCharger(EvChargerCommand::Unlock) => {
+                            // Sensitive: sent only after the person confirmed.
+                            assert!(request.confirmed);
+                            assert!(request.command.is_sensitive(EndpointType::EvCharger));
+                        }
+                        Command::EvCharger(EvChargerCommand::SetChargingSchedule {
+                            enabled,
+                            windows,
+                        }) => {
+                            assert!(*enabled && !request.confirmed);
+                            assert_eq!(windows.len(), 1);
+                            assert_eq!(windows[0].days, [Weekday::Saturday, Weekday::Sunday]);
+                            assert!(windows[0].end < windows[0].start, "past midnight");
+                            assert!(request.command.is_slow());
+                        }
+                        other => panic!("unexpected charger command example {other:?}"),
+                    },
                     other => panic!("unexpected command example for {other}"),
                 }
                 seen.command += 1;
@@ -149,7 +159,7 @@ fn every_capabilities_md_json_example_round_trips() {
     }
 
     assert_eq!(seen.device, 4, "{seen:?}");
-    assert_eq!(seen.command, 2, "{seen:?}");
+    assert_eq!(seen.command, 3, "{seen:?}");
     assert_eq!(seen.command_result, 1, "{seen:?}");
     assert_eq!(seen.event, 1, "{seen:?}");
     assert_eq!(seen.state, 2, "{seen:?}");
@@ -158,7 +168,7 @@ fn every_capabilities_md_json_example_round_trips() {
     assert_eq!(seen.device_config, 1, "{seen:?}");
     assert_eq!(
         blocks.len(),
-        13,
+        14,
         "new JSON example in capabilities.md: classify it here"
     );
 }
@@ -213,6 +223,19 @@ fn assert_charger_example(device: &Device) {
     assert_eq!(state.mode, Some(EvChargeMode::Scheduled));
     assert_eq!(state.auto_current, Some(true));
     assert_eq!(cap.current_range(), (6.0, 30.0));
+    // Its hours: two windows, as last saved from VESTA (it does not report
+    // them), and they fit what it holds.
+    let hours = cap.features.charging_schedule.unwrap();
+    assert!(hours.editable && !hours.reports_windows && hours.saving_needs_internet);
+    let schedule = state.charging_schedule.as_ref().unwrap();
+    assert_eq!(Some(schedule.enabled), state.schedule_enabled);
+    assert_eq!(hours.check(&schedule.windows), Ok(()));
+    assert!(charger.capabilities.supports(&Command::EvCharger(
+        EvChargerCommand::SetChargingSchedule {
+            enabled: true,
+            windows: schedule.windows.clone(),
+        }
+    )));
 
     let grid = device.endpoints[1]
         .capabilities

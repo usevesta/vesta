@@ -383,6 +383,7 @@ fn every_capability_state_has_the_documented_shape() {
                 mode: Some(EvChargeMode::Manual),
                 locked: None,
                 schedule_enabled: None,
+                charging_schedule: None,
             }
             .into(),
             json!({
@@ -408,6 +409,7 @@ fn every_capability_state_has_the_documented_shape() {
                 mode: Some(EvChargeMode::SolarGrid),
                 locked: Some(false),
                 schedule_enabled: Some(true),
+                charging_schedule: None,
             }
             .into(),
             json!({
@@ -537,6 +539,7 @@ fn full_catalog_endpoint_round_trips() {
                 adjustable_current: true,
                 lock: true,
                 schedule: false,
+                charging_schedule: None,
             },
             state: None,
         }),

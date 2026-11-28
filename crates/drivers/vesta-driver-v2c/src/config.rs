@@ -51,7 +51,7 @@ impl Default for Meters {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct V2cConfig {
     /// The charger's address on the home network: an IPv4 address or a
@@ -77,6 +77,33 @@ pub struct V2cConfig {
     /// when its address changed while VESTA was not running.
     #[serde(default)]
     pub charger_id: Option<String>,
+    /// A key for V2C's cloud API (made on the v2c.cloud website, "API"),
+    /// used **only** to store charging hours in the charger when someone
+    /// saves them (the local API cannot). A secret: it lives only in the
+    /// Hub's own `config.json`, is never logged, and never reaches a
+    /// screen. Without it the hours are set in V2C's app; switching them on
+    /// and off still works locally.
+    #[serde(default)]
+    pub cloud_api_key: Option<String>,
+}
+
+impl std::fmt::Debug for V2cConfig {
+    /// Without the cloud key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("V2cConfig")
+            .field("host", &self.host)
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("read_only", &self.read_only)
+            .field("meters", &self.meters)
+            .field("rediscover", &self.rediscover)
+            .field("charger_id", &self.charger_id)
+            .field(
+                "cloud_api_key",
+                &self.cloud_api_key.as_ref().map(|_| "<hidden>"),
+            )
+            .finish()
+    }
 }
 
 const fn default_poll_interval_ms() -> u64 {
@@ -186,7 +213,22 @@ impl V2cConfig {
         {
             return invalid("charger_id must be the ID shown in the charger's app".to_owned());
         }
+        // Never quote the key in the message.
+        if self.cloud_api_key.as_ref().is_some_and(|key| {
+            let key = key.trim();
+            key.is_empty() || key.len() > 512 || !key.chars().all(|c| c.is_ascii_graphic())
+        }) {
+            return invalid(
+                "cloud_api_key must be the key made on the v2c.cloud website (no spaces)"
+                    .to_owned(),
+            );
+        }
         Ok(())
+    }
+
+    /// The cloud key, when set.
+    pub(crate) fn cloud_api_key(&self) -> Option<&str> {
+        self.cloud_api_key.as_deref().map(str::trim)
     }
 
     pub(crate) fn address(&self) -> Result<Address, DriverError> {
@@ -216,6 +258,7 @@ mod tests {
         assert!(!config.read_only);
         assert!(config.rediscover);
         assert_eq!(config.charger_id, None);
+        assert_eq!(config.cloud_api_key, None);
         assert_eq!(config.meters, Meters::default());
         assert!(config.meters.grid && config.meters.house);
         assert!(!config.meters.solar && !config.meters.battery);
@@ -255,6 +298,24 @@ mod tests {
     }
 
     #[test]
+    fn the_cloud_key_is_a_secret() {
+        let config = V2cConfig::from_value(
+            &json!({ "host": "192.0.2.10", "cloud_api_key": " k3y-SECRET-value " }),
+        )
+        .unwrap();
+        assert_eq!(config.cloud_api_key(), Some("k3y-SECRET-value"));
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("SECRET"), "{debug}");
+        assert!(debug.contains("<hidden>"));
+        // Errors never quote it either.
+        let error =
+            V2cConfig::from_value(&json!({ "host": "192.0.2.10", "cloud_api_key": "SECRET key" }))
+                .unwrap_err()
+                .to_string();
+        assert!(!error.contains("SECRET"), "{error}");
+    }
+
+    #[test]
     fn rejects_bad_configs() {
         for bad in [
             json!({}),
@@ -274,6 +335,9 @@ mod tests {
             json!({ "host": "192.0.2.10", "charger_id": " " }),
             json!({ "host": "192.0.2.10", "meters": { "wind": true } }),
             json!({ "host": "192.0.2.10", "password": "x" }),
+            json!({ "host": "192.0.2.10", "cloud_api_key": "" }),
+            json!({ "host": "192.0.2.10", "cloud_api_key": "has a space" }),
+            json!({ "host": "192.0.2.10", "cloud_api_key": "x".repeat(600) }),
             json!("192.0.2.10"),
         ] {
             assert!(
